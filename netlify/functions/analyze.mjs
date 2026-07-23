@@ -20,6 +20,12 @@ Reguli stricte:
   {"food_name":"Nedetectat","grams":0,"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":"scazuta"}`;
 
 export default async (req) => {
+  // DEBUG temporar: ultimele 4 caractere ale cheii folosite efectiv de functie.
+  console.log(
+    "Cheie folosita (ultimele 4):",
+    String(process.env.ANTHROPIC_API_KEY || "").slice(-4) || "(goala)"
+  );
+
   if (req.method !== "POST") {
     return json({ error: "Foloseste metoda POST." }, 405);
   }
