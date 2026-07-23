@@ -36,6 +36,15 @@
 
         <div id="preview-card" class="preview-card hidden">
           <img id="preview-img" alt="Poza selectată" />
+          <label class="field" for="notes-input">
+            Notițe (opțional)
+            <textarea
+              id="notes-input"
+              rows="2"
+              placeholder="ex: shaorma doar cu carne și cartofi, sau gramaj ~300g"
+            ></textarea>
+          </label>
+          <button id="analyze-btn" class="primary-btn">🔍 Analizează</button>
           <div id="analyze-status" class="status"></div>
           <div id="result" class="result hidden"></div>
           <div id="result-actions" class="result-actions hidden">
@@ -85,6 +94,15 @@
         <label for="manual-photo" class="upload-btn">📷 Alege o poză</label>
         <input id="manual-photo" type="file" accept="image/*" hidden />
         <img id="manual-preview" class="manual-preview hidden" alt="Poza aleasă" />
+        <label class="field" for="manual-notes">
+          Notițe (opțional)
+          <textarea
+            id="manual-notes"
+            rows="2"
+            placeholder="ex: shaorma cu de toate, sau gramaj ~300g"
+          ></textarea>
+        </label>
+        <button id="manual-analyze" class="primary-btn" disabled>🔍 Analizează</button>
         <div id="manual-status" class="status"></div>
         <div id="manual-result" class="result hidden"></div>
         <label class="field" for="manual-datetime">
@@ -94,6 +112,22 @@
         <div class="modal-actions">
           <button id="manual-save" class="primary-btn" disabled>Adaugă</button>
           <button id="manual-cancel" class="ghost-btn">Renunță</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Modal: adaugă din nou o masă existentă ============ -->
+    <div id="readd-modal" class="modal hidden">
+      <div class="modal-card">
+        <h2>Adaugă din nou</h2>
+        <div id="readd-summary" class="readd-summary"></div>
+        <label class="field" for="readd-datetime">
+          Data și ora mesei
+          <input type="datetime-local" id="readd-datetime" />
+        </label>
+        <div class="modal-actions">
+          <button id="readd-save" class="primary-btn">Adaugă</button>
+          <button id="readd-cancel" class="ghost-btn">Renunță</button>
         </div>
       </div>
     </div>
