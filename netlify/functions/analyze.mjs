@@ -1,43 +1,23 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Clientul citeste automat cheia din variabila de mediu ANTHROPIC_API_KEY
-// (setata in Netlify -> Site settings -> Environment variables).
+// Clientul citeste automat cheia din variabila de mediu ANTHROPIC_API_KEY.
 const client = new Anthropic();
 
-// Schema pe care modelul TREBUIE sa o respecte => raspunsul e mereu JSON valid,
-// gata de folosit, fara sa ghicim formatul.
-const SCHEMA = {
-  type: "object",
-  properties: {
-    food_name: { type: "string" },
-    grams: { type: "integer" },
-    calories: { type: "integer" },
-    protein_g: { type: "integer" },
-    carbs_g: { type: "integer" },
-    fat_g: { type: "integer" },
-    confidence: { type: "string", enum: ["scazuta", "medie", "ridicata"] }
-  },
-  required: [
-    "food_name",
-    "grams",
-    "calories",
-    "protein_g",
-    "carbs_g",
-    "fat_g",
-    "confidence"
-  ],
-  additionalProperties: false
-};
-
 const SYSTEM = `Esti un nutritionist care estimeaza valorile nutritionale dintr-o poza cu mancare.
-Reguli:
-- Identifica felul de mancare principal din imagine.
-- Estimeaza portia in grame pe baza indiciilor vizuale (farfurie, tacamuri, ambalaj, mana).
-- Calculeaza caloriile si macro (proteine, carbohidrati, grasimi) pentru portia estimata.
-- Pentru mancare reala, toate valorile numerice (grame si macro) trebuie sa fie realiste si strict mai mari ca 0 — nu returna 0.
-- food_name se scrie in limba romana, scurt (ex: "Piept de pui la gratar cu orez").
-- confidence reflecta cat de sigur esti de estimarea portiei in grame.
-- Daca in imagine nu se vede mancare, pune food_name = "Nedetectat" si toate valorile numerice 0.`;
+
+Analizeaza imaginea si estimeaza, pentru portia din poza:
+- felul de mancare (nume scurt, in limba romana)
+- portia in grame (foloseste indicii vizuale: farfurie, tacamuri, ambalaj, mana)
+- caloriile totale si macro: proteine, carbohidrati, grasimi
+
+Raspunde DOAR cu un obiect JSON, exact in formatul de mai jos, fara alt text, fara markdown, fara explicatii:
+{"food_name":"Pizza pepperoni","grams":350,"calories":820,"protein_g":38,"carbs_g":72,"fat_g":40,"confidence":"medie"}
+
+Reguli stricte:
+- Toate valorile numerice sunt numere intregi realiste si strict mai mari ca 0 pentru mancare reala.
+- confidence este exact unul din: "scazuta", "medie", "ridicata".
+- Daca in imagine chiar nu se vede mancare, raspunde:
+  {"food_name":"Nedetectat","grams":0,"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":"scazuta"}`;
 
 export default async (req) => {
   if (req.method !== "POST") {
@@ -60,8 +40,7 @@ export default async (req) => {
     const message = await client.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 2048,
-      // Lasam modelul sa "gandeasca" estimarea inainte sa completeze JSON-ul.
-      // Fara reasoning, iesirea structurata poate returna 0 la campurile numerice.
+      // Lasam modelul sa gandeasca estimarea inainte de a raspunde.
       thinking: { type: "adaptive" },
       system: SYSTEM,
       messages: [
@@ -74,25 +53,27 @@ export default async (req) => {
             },
             {
               type: "text",
-              text: "Estimeaza valorile nutritionale pentru mancarea din aceasta poza."
+              text: "Estimeaza valorile nutritionale pentru mancarea din poza. Raspunde doar cu JSON-ul."
             }
           ]
         }
-      ],
-      // Constrange raspunsul la schema de mai sus.
-      output_config: { format: { type: "json_schema", schema: SCHEMA } }
+      ]
     });
 
-    // Cu output_config.format, primul bloc de text e garantat JSON valid.
     const textBlock = message.content.find((b) => b.type === "text");
     if (!textBlock) return json({ error: "Raspuns gol de la model." }, 502);
 
-    const data = JSON.parse(textBlock.text);
+    // Depanare: vezi exact ce a raspuns modelul in Netlify -> Logs -> Functions -> analyze.
+    console.log("Raspuns model:", textBlock.text);
 
-    // Consistenta: caloriile se deduc din macro (4/4/9 kcal per gram),
-    // ca sa nu apara niciodata "macro pline dar 0 kcal".
+    const data = extractJson(textBlock.text);
+    if (!data) return json({ error: "Nu am putut interpreta raspunsul modelului." }, 502);
+
+    // Consistenta: caloriile se deduc din macro (4/4/9 kcal per gram).
     data.calories = Math.round(
-      (data.protein_g || 0) * 4 + (data.carbs_g || 0) * 4 + (data.fat_g || 0) * 9
+      (Number(data.protein_g) || 0) * 4 +
+        (Number(data.carbs_g) || 0) * 4 +
+        (Number(data.fat_g) || 0) * 9
     );
 
     return json(data, 200);
@@ -101,6 +82,21 @@ export default async (req) => {
     return json({ error: "Analiza a esuat. Incearca din nou." }, 500);
   }
 };
+
+// Extrage un obiect JSON din textul modelului, chiar daca are text in jur.
+function extractJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {}
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {}
+  }
+  return null;
+}
 
 function json(obj, status) {
   return new Response(JSON.stringify(obj), {
