@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#16a34a" />
+    <title>Calorie Tracker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1 id="header-title">Astăzi</h1>
+      <span id="header-date" class="header-date"></span>
+    </header>
+
+    <main>
+      <!-- ============ ACASĂ ============ -->
+      <section id="view-home" class="view active">
+        <div class="upload-card">
+          <label for="photo-input" class="upload-btn">📷 Fă o poză mâncării</label>
+          <input
+            id="photo-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+          />
+          <p class="hint">
+            Sfat: pune o furculiță lângă farfurie pentru o estimare mai bună a porției.
+          </p>
+        </div>
+
+        <div id="preview-card" class="preview-card hidden">
+          <img id="preview-img" alt="Poza selectată" />
+          <div id="analyze-status" class="status"></div>
+          <div id="result" class="result hidden"></div>
+          <div id="result-actions" class="result-actions hidden">
+            <button id="save-btn" class="primary-btn">➕ Adaugă la ziua de azi</button>
+            <button id="discard-btn" class="ghost-btn">Renunță</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ STATISTICI ============ -->
+      <section id="view-stats" class="view">
+        <div id="totals" class="totals"></div>
+        <div id="entries" class="entries"></div>
+      </section>
+    </main>
+
+    <nav class="tabbar">
+      <button class="tab active" data-view="home">🏠 Acasă</button>
+      <button class="tab" data-view="stats">📊 Statistici</button>
+    </nav>
+
+    <script src="app.js"></script>
+  </body>
+</html>

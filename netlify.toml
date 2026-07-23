@@ -1,0 +1,6 @@
+# Configurare Netlify
+[build]
+  # Fisierele statice (index.html, app.js, styles.css) sunt in radacina proiectului.
+  publish = "."
+  # Functiile serverless stau in folderul de mai jos.
+  functions = "netlify/functions"
