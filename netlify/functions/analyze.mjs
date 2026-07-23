@@ -11,7 +11,7 @@ Analizeaza imaginea si estimeaza, pentru portia din poza:
 - caloriile totale si macro: proteine, carbohidrati, grasimi
 
 Raspunde DOAR cu un obiect JSON, exact in formatul de mai jos, fara alt text, fara markdown, fara explicatii:
-{"food_name":"Pizza pepperoni","grams":350,"calories":820,"protein_g":38,"carbs_g":72,"fat_g":40,"confidence":"medie"}
+{"food_name":"Pizza pepperoni","grams":350,"calories":800,"protein_g":38,"carbs_g":72,"fat_g":40,"confidence":"medie"}
 
 Reguli stricte:
 - Toate valorile numerice sunt numere intregi realiste si strict mai mari ca 0 pentru mancare reala.
@@ -40,7 +40,8 @@ export default async (req) => {
     const message = await client.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 2048,
-      // Lasam modelul sa gandeasca estimarea inainte de a raspunde.
+      // Lasam modelul sa "gandeasca" estimarea inainte sa completeze JSON-ul.
+      // Fara reasoning, iesirea structurata poate returna 0 la campurile numerice.
       thinking: { type: "adaptive" },
       system: SYSTEM,
       messages: [
