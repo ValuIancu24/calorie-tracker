@@ -34,6 +34,7 @@ Reguli:
 - Identifica felul de mancare principal din imagine.
 - Estimeaza portia in grame pe baza indiciilor vizuale (farfurie, tacamuri, ambalaj, mana).
 - Calculeaza caloriile si macro (proteine, carbohidrati, grasimi) pentru portia estimata.
+- Pentru mancare reala, toate valorile numerice (grame si macro) trebuie sa fie realiste si strict mai mari ca 0 — nu returna 0.
 - food_name se scrie in limba romana, scurt (ex: "Piept de pui la gratar cu orez").
 - confidence reflecta cat de sigur esti de estimarea portiei in grame.
 - Daca in imagine nu se vede mancare, pune food_name = "Nedetectat" si toate valorile numerice 0.`;
@@ -58,7 +59,10 @@ export default async (req) => {
   try {
     const message = await client.messages.create({
       model: "claude-opus-4-8",
-      max_tokens: 1024,
+      max_tokens: 2048,
+      // Lasam modelul sa "gandeasca" estimarea inainte sa completeze JSON-ul.
+      // Fara reasoning, iesirea structurata poate returna 0 la campurile numerice.
+      thinking: { type: "adaptive" },
       system: SYSTEM,
       messages: [
         {
@@ -84,6 +88,13 @@ export default async (req) => {
     if (!textBlock) return json({ error: "Raspuns gol de la model." }, 502);
 
     const data = JSON.parse(textBlock.text);
+
+    // Consistenta: caloriile se deduc din macro (4/4/9 kcal per gram),
+    // ca sa nu apara niciodata "macro pline dar 0 kcal".
+    data.calories = Math.round(
+      (data.protein_g || 0) * 4 + (data.carbs_g || 0) * 4 + (data.fat_g || 0) * 9
+    );
+
     return json(data, 200);
   } catch (err) {
     console.error("Eroare la analiza:", err);
