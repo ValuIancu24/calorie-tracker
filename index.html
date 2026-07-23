@@ -47,10 +47,61 @@
 
       <!-- ============ STATISTICI ============ -->
       <section id="view-stats" class="view">
+        <!-- Selector de perioadă -->
+        <div class="period-selector">
+          <div id="period-modes" class="period-modes">
+            <button class="period-mode active" data-mode="day">Zi</button>
+            <button class="period-mode" data-mode="week">Săpt.</button>
+            <button class="period-mode" data-mode="month">Lună</button>
+            <button class="period-mode" data-mode="year">An</button>
+            <button class="period-mode" data-mode="custom">Interval</button>
+          </div>
+
+          <!-- Navigare zi/săpt/lună/an -->
+          <div id="period-nav" class="period-nav">
+            <button id="period-prev" class="period-arrow" title="Înapoi">‹</button>
+            <div id="period-label" class="period-label"></div>
+            <button id="period-next" class="period-arrow" title="Înainte">›</button>
+          </div>
+
+          <!-- Interval ales manual -->
+          <div id="period-range" class="period-range hidden">
+            <label>De la <input type="date" id="range-start" /></label>
+            <label>Până la <input type="date" id="range-end" /></label>
+          </div>
+        </div>
+
+        <button id="add-manual-btn" class="add-manual-btn">➕ Adaugă o masă</button>
+
         <div id="totals" class="totals"></div>
         <div id="entries" class="entries"></div>
       </section>
     </main>
+
+    <!-- ============ Modal: adăugare manuală ============ -->
+    <div id="manual-modal" class="modal hidden">
+      <div class="modal-card">
+        <h2>Adaugă o masă</h2>
+        <label for="manual-photo" class="upload-btn">📷 Alege o poză</label>
+        <input id="manual-photo" type="file" accept="image/*" hidden />
+        <img id="manual-preview" class="manual-preview hidden" alt="Poza aleasă" />
+        <div id="manual-status" class="status"></div>
+        <div id="manual-result" class="result hidden"></div>
+        <label class="field" for="manual-datetime">
+          Data și ora mesei
+          <input type="datetime-local" id="manual-datetime" />
+        </label>
+        <div class="modal-actions">
+          <button id="manual-save" class="primary-btn" disabled>Adaugă</button>
+          <button id="manual-cancel" class="ghost-btn">Renunță</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Lightbox: poză mărită ============ -->
+    <div id="lightbox" class="lightbox hidden">
+      <img id="lightbox-img" alt="Poză mărită" />
+    </div>
 
     <nav class="tabbar">
       <button class="tab active" data-view="home">🏠 Acasă</button>

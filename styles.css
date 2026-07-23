@@ -247,6 +247,216 @@ main {
   padding: 40px 20px;
 }
 
+/* ---------- Selector de perioadă ---------- */
+.period-selector {
+  margin-bottom: 14px;
+}
+.period-modes {
+  display: flex;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 4px;
+}
+.period-mode {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.period-mode.active {
+  background: var(--green);
+  color: #fff;
+}
+.period-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.period-arrow {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 10px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+  cursor: pointer;
+}
+.period-arrow:active {
+  background: var(--bg);
+}
+.period-label {
+  flex: 1;
+  text-align: center;
+  font-weight: 600;
+  font-size: 15px;
+}
+.period-range {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.period-range label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.period-range input {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+/* ---------- Buton adăugare manuală ---------- */
+.add-manual-btn {
+  width: 100%;
+  background: var(--card);
+  color: var(--green);
+  border: 1px dashed var(--green);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+.add-manual-btn:active {
+  background: var(--bg);
+}
+
+/* ---------- Media zilnică + header pe zi ---------- */
+.totals .total-avg {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+}
+.totals .total-avg b {
+  color: var(--text);
+}
+.day-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 6px 2px -2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* Poza din listă e clickabilă (se mărește) */
+.entry-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+  cursor: zoom-in;
+}
+.entry-thumb.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  font-size: 28px;
+  cursor: default;
+}
+
+/* ---------- Modal adăugare manuală ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 100;
+  padding: 12px;
+}
+.modal-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.modal-card h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+.modal-card .upload-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+.manual-preview {
+  width: 100%;
+  border-radius: 12px;
+  margin-top: 12px;
+  display: block;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field input {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 15px;
+  font-family: inherit;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- Lightbox (poză mărită) ---------- */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+}
+
 /* ---------- Bara de jos ---------- */
 .tabbar {
   position: fixed;
