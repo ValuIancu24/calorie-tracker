@@ -1,0 +1,10 @@
+{
+  "name": "calorie-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Estimeaza caloriile si macro dintr-o poza cu mancare, cu jurnal zilnic.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.113.0"
+  }
+}
