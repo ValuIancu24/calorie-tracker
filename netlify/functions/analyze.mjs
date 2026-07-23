@@ -16,6 +16,7 @@ Raspunde DOAR cu un obiect JSON, exact in formatul de mai jos, fara alt text, fa
 Reguli stricte:
 - Toate valorile numerice sunt numere intregi realiste si strict mai mari ca 0 pentru mancare reala.
 - confidence este exact unul din: "scazuta", "medie", "ridicata".
+- Daca utilizatorul iti da notite (de ex. compozitia mancarii sau gramajul exact), tine cont de ele si prioritizeaza-le fata de estimarea pur vizuala. Compozitia schimba caloriile (ex. o shaorma doar cu carne si cartofi e mai calorica decat una cu multe salate si legume).
 - Daca in imagine chiar nu se vede mancare, raspunde:
   {"food_name":"Nedetectat","grams":0,"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":"scazuta"}`;
 
@@ -37,9 +38,19 @@ export default async (req) => {
     return json({ error: "Corp invalid (nu este JSON)." }, 400);
   }
 
-  const { image_base64, media_type } = body || {};
+  const { image_base64, media_type, notes } = body || {};
   if (!image_base64 || !media_type) {
     return json({ error: "Lipseste image_base64 sau media_type." }, 400);
+  }
+
+  // Text pentru model: cererea de baza + eventualele notite de la utilizator.
+  let userText =
+    "Estimeaza valorile nutritionale pentru mancarea din poza. Raspunde doar cu JSON-ul.";
+  const cleanNotes = String(notes || "").trim();
+  if (cleanNotes) {
+    userText +=
+      "\n\nNotite de la utilizator (pot contine compozitia sau gramajul exact - foloseste-le prioritar): " +
+      cleanNotes;
   }
 
   try {
@@ -59,7 +70,7 @@ export default async (req) => {
             },
             {
               type: "text",
-              text: "Estimeaza valorile nutritionale pentru mancarea din poza. Raspunde doar cu JSON-ul."
+              text: userText
             }
           ]
         }

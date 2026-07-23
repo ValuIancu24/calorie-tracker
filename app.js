@@ -82,9 +82,9 @@ function fileToScaledDataUrl(file, maxSize, quality) {
   });
 }
 
-// Redimensionează + trimite poza la model. Întoarce { thumb, result }.
+// Redimensionează + trimite poza (și eventualele notițe) la model. Întoarce { thumb, result }.
 // `onThumb` e chemat imediat ce miniatura e gata, ca să arătăm poza cât timp se analizează.
-async function analyzeFile(file, onThumb) {
+async function analyzeFile(file, notes, onThumb) {
   const sendUrl = await fileToScaledDataUrl(file, 1024, 0.85);
   const thumbUrl = await fileToScaledDataUrl(file, 320, 0.7);
   if (onThumb) onThumb(thumbUrl);
@@ -93,7 +93,11 @@ async function analyzeFile(file, onThumb) {
   const res = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_base64: base64, media_type: "image/jpeg" })
+    body: JSON.stringify({
+      image_base64: base64,
+      media_type: "image/jpeg",
+      notes: (notes || "").trim()
+    })
   });
   const data = await res.json();
   if (!res.ok || data.error) {
@@ -110,6 +114,8 @@ const el = {
   photoInput: document.getElementById("photo-input"),
   previewCard: document.getElementById("preview-card"),
   previewImg: document.getElementById("preview-img"),
+  notesInput: document.getElementById("notes-input"),
+  analyzeBtn: document.getElementById("analyze-btn"),
   status: document.getElementById("analyze-status"),
   result: document.getElementById("result"),
   actions: document.getElementById("result-actions"),
@@ -131,11 +137,19 @@ const el = {
   manualModal: document.getElementById("manual-modal"),
   manualPhoto: document.getElementById("manual-photo"),
   manualPreview: document.getElementById("manual-preview"),
+  manualNotes: document.getElementById("manual-notes"),
+  manualAnalyze: document.getElementById("manual-analyze"),
   manualStatus: document.getElementById("manual-status"),
   manualResult: document.getElementById("manual-result"),
   manualDatetime: document.getElementById("manual-datetime"),
   manualSave: document.getElementById("manual-save"),
   manualCancel: document.getElementById("manual-cancel"),
+  // modal adaugă din nou
+  readdModal: document.getElementById("readd-modal"),
+  readdSummary: document.getElementById("readd-summary"),
+  readdDatetime: document.getElementById("readd-datetime"),
+  readdSave: document.getElementById("readd-save"),
+  readdCancel: document.getElementById("readd-cancel"),
   // lightbox
   lightbox: document.getElementById("lightbox"),
   lightboxImg: document.getElementById("lightbox-img"),
@@ -145,29 +159,43 @@ const el = {
 };
 
 // ---------------- Flux poză -> analiză (Acasă) ----------------
-// Rezultatul curent, în așteptare până apeși "Adaugă" sau "Renunță".
-let pending = null; // { thumb, result }
+let pendingFile = null; // fișierul selectat, înainte de analiză
+let pending = null; // { thumb, result } după analiză, până la Adaugă / Renunță
 
-el.photoInput.addEventListener("change", async (e) => {
+// La selectarea pozei arătăm preview + notițe; analiza pornește abia la butonul "Analizează",
+// ca să apucăm să scriem notițe.
+el.photoInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
+  pendingFile = file;
   resetPreview();
+  el.previewImg.src = URL.createObjectURL(file);
   el.previewCard.classList.remove("hidden");
-  el.status.textContent = "Pregătesc poza...";
+  el.notesInput.value = "";
+  el.analyzeBtn.classList.remove("hidden");
+  el.status.textContent = "";
+  // Golește input-ul ca să poți re-selecta aceeași poză.
+  el.photoInput.value = "";
+});
 
+el.analyzeBtn.addEventListener("click", async () => {
+  if (!pendingFile) return;
+  el.analyzeBtn.classList.add("hidden");
+  el.status.textContent = "Analizez poza... (poate dura câteva secunde)";
   try {
-    const { thumb, result } = await analyzeFile(file, (t) => {
-      el.previewImg.src = t;
-      el.status.textContent = "Analizez poza... (poate dura câteva secunde)";
-    });
+    const { thumb, result } = await analyzeFile(
+      pendingFile,
+      el.notesInput.value,
+      (t) => {
+        el.previewImg.src = t;
+      }
+    );
     pending = { thumb, result };
     showResult(result);
   } catch (err) {
     el.status.textContent = "Eroare: " + err.message + ". Încearcă din nou.";
-  } finally {
-    // Golește input-ul ca să poți re-selecta aceeași poză.
-    el.photoInput.value = "";
+    el.analyzeBtn.classList.remove("hidden");
   }
 });
 
@@ -217,6 +245,7 @@ el.saveBtn.addEventListener("click", () => {
   });
   resetPreview();
   el.previewCard.classList.add("hidden");
+  pendingFile = null;
   goToDay(ts); // sari la ziua de azi, unde tocmai am adăugat
   switchView("stats");
 });
@@ -224,11 +253,11 @@ el.saveBtn.addEventListener("click", () => {
 el.discardBtn.addEventListener("click", () => {
   resetPreview();
   el.previewCard.classList.add("hidden");
+  pendingFile = null;
 });
 
-// ---------------- Adăugare manuală (poză + dată/oră alese) ----------------
-// La fel ca pe Acasă (numele + valorile vin de la model), dar cu dată/oră la alegere,
-// ca mesele adăugate ulterior să se așeze corect cronologic.
+// ---------------- Adăugare manuală (poză + notițe + dată/oră alese) ----------------
+let manualFile = null;
 let pendingManual = null; // { thumb, result }
 
 el.addManualBtn.addEventListener("click", openManualModal);
@@ -238,14 +267,19 @@ el.manualModal.addEventListener("click", (e) => {
 });
 
 function openManualModal() {
+  manualFile = null;
   pendingManual = null;
   el.manualPhoto.value = "";
   el.manualPreview.src = "";
   el.manualPreview.classList.add("hidden");
+  el.manualNotes.value = "";
   el.manualResult.innerHTML = "";
   el.manualResult.classList.add("hidden");
   el.manualStatus.textContent = "";
-  el.manualDatetime.value = toDatetimeLocal(new Date());
+  const now = new Date();
+  el.manualDatetime.value = toDatetimeLocal(now);
+  el.manualDatetime.max = toDatetimeLocal(now); // fără mese în viitor
+  el.manualAnalyze.disabled = true;
   el.manualSave.disabled = true;
   el.manualModal.classList.remove("hidden");
 }
@@ -253,20 +287,34 @@ function closeManualModal() {
   el.manualModal.classList.add("hidden");
 }
 
-el.manualPhoto.addEventListener("change", async (e) => {
+el.manualPhoto.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
-
+  manualFile = file;
   pendingManual = null;
+  el.manualPreview.src = URL.createObjectURL(file);
+  el.manualPreview.classList.remove("hidden");
+  el.manualResult.classList.add("hidden");
+  el.manualStatus.textContent = "";
+  el.manualAnalyze.disabled = false;
+  el.manualSave.disabled = true;
+  el.manualPhoto.value = "";
+});
+
+el.manualAnalyze.addEventListener("click", async () => {
+  if (!manualFile) return;
+  el.manualAnalyze.disabled = true;
   el.manualSave.disabled = true;
   el.manualResult.classList.add("hidden");
   el.manualStatus.textContent = "Analizez poza... (poate dura câteva secunde)";
-
   try {
-    const { thumb, result } = await analyzeFile(file, (t) => {
-      el.manualPreview.src = t;
-      el.manualPreview.classList.remove("hidden");
-    });
+    const { thumb, result } = await analyzeFile(
+      manualFile,
+      el.manualNotes.value,
+      (t) => {
+        el.manualPreview.src = t;
+      }
+    );
     pendingManual = { thumb, result };
     el.manualStatus.textContent = "";
     el.manualResult.innerHTML = resultHtml(result);
@@ -275,8 +323,7 @@ el.manualPhoto.addEventListener("change", async (e) => {
   } catch (err) {
     el.manualStatus.textContent =
       "Eroare: " + err.message + ". Încearcă din nou.";
-  } finally {
-    el.manualPhoto.value = "";
+    el.manualAnalyze.disabled = false;
   }
 });
 
@@ -303,6 +350,58 @@ el.manualSave.addEventListener("click", () => {
   });
   closeManualModal();
   goToDay(ts); // sari la ziua mesei ca să confirmi că s-a așezat corect
+});
+
+// ---------------- Adaugă din nou (refolosește exact aceleași valori) ----------------
+let pendingReadd = null; // masa sursă
+
+el.readdCancel.addEventListener("click", closeReaddModal);
+el.readdModal.addEventListener("click", (e) => {
+  if (e.target === el.readdModal) closeReaddModal();
+});
+
+function openReaddModal(entry) {
+  pendingReadd = entry;
+  const thumb = entry.thumb
+    ? `<img src="${entry.thumb}" alt="${escapeHtml(entry.food_name)}" />`
+    : `<div class="readd-thumb-ph">🍽</div>`;
+  el.readdSummary.innerHTML = `
+    ${thumb}
+    <div class="info">
+      <div class="name">${escapeHtml(entry.food_name)}</div>
+      <div class="sub">~${entry.grams}g · ${entry.protein_g}P / ${entry.carbs_g}C / ${entry.fat_g}G</div>
+      <div class="kcal">${entry.calories} kcal</div>
+    </div>`;
+  const now = new Date();
+  el.readdDatetime.value = toDatetimeLocal(now);
+  el.readdDatetime.max = toDatetimeLocal(now);
+  el.readdModal.classList.remove("hidden");
+}
+function closeReaddModal() {
+  el.readdModal.classList.add("hidden");
+  pendingReadd = null;
+}
+
+el.readdSave.addEventListener("click", () => {
+  if (!pendingReadd) return;
+  const value = el.readdDatetime.value;
+  if (!value) return;
+  const ts = new Date(value).getTime();
+  const s = pendingReadd;
+  addEntry({
+    id: newId(),
+    date: dateStrFromTs(ts),
+    ts,
+    thumb: s.thumb,
+    food_name: s.food_name,
+    grams: s.grams,
+    calories: s.calories,
+    protein_g: s.protein_g,
+    carbs_g: s.carbs_g,
+    fat_g: s.fat_g
+  });
+  closeReaddModal();
+  goToDay(ts);
 });
 
 // ---------------- Statistici ----------------
@@ -416,6 +515,8 @@ el.rangeEnd.addEventListener("change", () => {
 function renderStats() {
   const [start, end] = periodRange();
   el.periodLabel.textContent = periodLabelText(start, end);
+  // Nu putem naviga în viitor: dezactivează ">" când perioada ajunge la ziua de azi.
+  el.periodNext.disabled = end >= todayStr();
 
   const items = loadEntries()
     .filter((e) => e.date >= start && e.date <= end)
@@ -503,15 +604,24 @@ function entryHtml(e) {
         <div class="sub">~${e.grams}g · ${e.protein_g}P / ${e.carbs_g}C / ${e.fat_g}G · ${prettyTime(e.ts)}</div>
         <div class="kcal">${e.calories} kcal</div>
       </div>
-      <button class="del" data-id="${e.id}" title="Șterge">🗑</button>
+      <div class="entry-actions">
+        <button class="readd" data-id="${e.id}" title="Adaugă din nou">🔁</button>
+        <button class="del" data-id="${e.id}" title="Șterge">🗑</button>
+      </div>
     </div>`;
 }
 
-// Click pe listă: ștergere (delegare) sau mărirea pozei.
+// Click pe listă: ștergere / adaugă din nou / mărirea pozei (delegare).
 el.entries.addEventListener("click", (e) => {
   const del = e.target.closest(".del");
   if (del) {
     deleteEntry(del.dataset.id);
+    return;
+  }
+  const readd = e.target.closest(".readd");
+  if (readd) {
+    const entry = loadEntries().find((x) => x.id === readd.dataset.id);
+    if (entry) openReaddModal(entry);
     return;
   }
   const img = e.target.closest("img.entry-thumb");
@@ -556,4 +666,6 @@ function escapeHtml(str) {
 el.headerDate.textContent = prettyDate(todayStr());
 el.rangeStart.value = customStart;
 el.rangeEnd.value = customEnd;
+el.rangeStart.max = todayStr(); // calendarul nu lasă să alegi zile viitoare
+el.rangeEnd.max = todayStr();
 renderStats();
