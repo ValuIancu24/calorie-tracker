@@ -13,8 +13,14 @@
   </head>
   <body>
     <header class="app-header">
-      <h1 id="header-title">Astăzi</h1>
-      <span id="header-date" class="header-date"></span>
+      <div class="app-header-top">
+        <h1 id="header-title">Astăzi</h1>
+        <span id="header-date" class="header-date"></span>
+      </div>
+      <nav class="tabbar">
+        <button class="tab active" data-view="home">🏠 Acasă</button>
+        <button class="tab" data-view="stats">📊 Statistici</button>
+      </nav>
     </header>
 
     <main>
@@ -46,10 +52,46 @@
             <button id="discard-btn" class="ghost-btn">Renunță</button>
           </div>
         </div>
+
+        <div class="upload-card exercise-card">
+          <button id="home-add-exercise" class="upload-btn">🏃 Adaugă un exercițiu</button>
+          <p class="hint">
+            Scrie ce ai făcut, ex: „am înotat 15 min, apoi cardio o oră".
+          </p>
+        </div>
       </section>
 
       <!-- ============ STATISTICI ============ -->
       <section id="view-stats" class="view">
+        <!-- Datele personale -->
+        <div class="profile-card">
+          <h2>Datele mele</h2>
+          <div class="profile-fields">
+            <label class="field">
+              Sex
+              <select id="profile-sex">
+                <option value="M">Bărbat</option>
+                <option value="F">Femeie</option>
+              </select>
+            </label>
+            <label class="field">
+              Vârstă
+              <input type="number" id="profile-age" min="1" max="120" inputmode="numeric" placeholder="ani" />
+            </label>
+            <label class="field">
+              Înălțime
+              <input type="number" id="profile-height" min="50" max="250" inputmode="numeric" placeholder="cm" />
+            </label>
+            <label class="field">
+              Greutate
+              <input type="number" id="profile-weight" min="20" max="400" step="0.1" inputmode="decimal" placeholder="kg" />
+            </label>
+          </div>
+          <button id="profile-save" class="primary-btn">💾 Salvează</button>
+          <div id="profile-status" class="status"></div>
+          <div id="profile-summary" class="profile-summary"></div>
+        </div>
+
         <!-- Selector de perioadă -->
         <div class="period-selector">
           <div id="period-modes" class="period-modes">
@@ -74,7 +116,10 @@
           </div>
         </div>
 
-        <button id="add-manual-btn" class="add-manual-btn">➕ Adaugă o masă</button>
+        <div class="add-row">
+          <button id="add-manual-btn" class="add-manual-btn">➕ Adaugă o masă</button>
+          <button id="add-exercise-btn" class="add-manual-btn">🏃 Adaugă exercițiu</button>
+        </div>
 
         <div id="totals" class="totals"></div>
         <div id="entries" class="entries"></div>
@@ -127,15 +172,58 @@
       </div>
     </div>
 
+    <!-- ============ Modal: adăugare exercițiu ============ -->
+    <div id="exercise-modal" class="modal hidden">
+      <div class="modal-card">
+        <h2>Adaugă exercițiu</h2>
+        <label class="field" for="exercise-text">
+          Ce ai făcut?
+          <textarea
+            id="exercise-text"
+            rows="3"
+            placeholder="ex: am înotat 15 min, apoi m-am bălăcit 30 min, apoi cardio o oră la sală"
+          ></textarea>
+        </label>
+        <button id="exercise-estimate" class="primary-btn">🔥 Estimează</button>
+        <div id="exercise-status" class="status"></div>
+        <div id="exercise-result" class="result hidden"></div>
+        <label class="field" for="exercise-datetime">
+          Data și ora
+          <input type="datetime-local" id="exercise-datetime" />
+        </label>
+        <div class="modal-actions">
+          <button id="exercise-save" class="primary-btn" disabled>Adaugă</button>
+          <button id="exercise-cancel" class="ghost-btn">Renunță</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Modal: detalii masă (macro + notițe) ============ -->
+    <div id="meal-detail-modal" class="modal hidden">
+      <div class="modal-card">
+        <h2 id="meal-detail-title">Masă</h2>
+        <div id="meal-detail-body" class="result"></div>
+        <div class="modal-actions">
+          <button id="meal-detail-close" class="primary-btn">Închide</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Modal: detalii exercițiu (breakdown) ============ -->
+    <div id="exercise-detail-modal" class="modal hidden">
+      <div class="modal-card">
+        <h2 id="exercise-detail-title">Exercițiu</h2>
+        <div id="exercise-detail-body" class="result"></div>
+        <div class="modal-actions">
+          <button id="exercise-detail-close" class="primary-btn">Închide</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ Lightbox: poză mărită ============ -->
     <div id="lightbox" class="lightbox hidden">
       <img id="lightbox-img" alt="Poză mărită" />
     </div>
-
-    <nav class="tabbar">
-      <button class="tab active" data-view="home">🏠 Acasă</button>
-      <button class="tab" data-view="stats">📊 Statistici</button>
-    </nav>
 
     <script src="app.js"></script>
   </body>

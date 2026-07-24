@@ -1,7 +1,15 @@
 "use strict";
 
 const STORAGE_KEY = "ct_entries";
+const PROFILE_KEY = "ct_profile";
+const VIEW_KEY = "ct_view";
 const API_URL = "/.netlify/functions/analyze";
+const EXERCISE_URL = "/.netlify/functions/exercise";
+
+// Factor de activitate peste metabolismul bazal (BMR) pentru "cat arde corpul intr-o zi
+// normala, fara sport intentionat". Exercitiile logate se adauga separat deasupra, ca sa
+// nu numaram sportul de doua ori.
+const ACTIVITY_FACTOR = 1.2;
 
 // ---------------- Utilitare dată ----------------
 // Data locală în format YYYY-MM-DD dintr-un obiect Date. Cheia după care grupăm mesele pe zile.
@@ -58,6 +66,49 @@ function deleteEntry(id) {
 }
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// O intrare fara `type` (dinainte de exercitii) e considerata masa.
+function isExercise(e) {
+  return e.type === "exercise";
+}
+
+// ---------------- Profil + formule (IMC / BMR / deficit) ----------------
+function loadProfile() {
+  try {
+    return JSON.parse(localStorage.getItem(PROFILE_KEY)) || null;
+  } catch {
+    return null;
+  }
+}
+function saveProfile(p) {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+}
+function profileComplete(p) {
+  return !!(p && p.sex && p.age > 0 && p.height_cm > 0 && p.weight_kg > 0);
+}
+
+// Indice de masa corporala = kg / m^2.
+function computeBmi(weightKg, heightCm) {
+  const m = heightCm / 100;
+  if (!m) return 0;
+  return weightKg / (m * m);
+}
+function bmiCategory(bmi) {
+  if (bmi < 18.5) return "subponderal";
+  if (bmi < 25) return "normal";
+  if (bmi < 30) return "supraponderal";
+  return "obezitate";
+}
+
+// Metabolism bazal (Mifflin-St Jeor) - are nevoie de sex.
+function computeBmr(p) {
+  const base = 10 * p.weight_kg + 6.25 * p.height_cm - 5 * p.age;
+  return p.sex === "F" ? base - 161 : base + 5;
+}
+// Cate calorii arde corpul intr-o zi normala (BMR * factor sedentar).
+function bodyBurn(p) {
+  return Math.round(computeBmr(p) * ACTIVITY_FACTOR);
 }
 
 // ---------------- Imagini ----------------
@@ -151,6 +202,35 @@ const el = {
   readdStatus: document.getElementById("readd-status"),
   readdSave: document.getElementById("readd-save"),
   readdCancel: document.getElementById("readd-cancel"),
+  // profil (date personale)
+  profileSex: document.getElementById("profile-sex"),
+  profileAge: document.getElementById("profile-age"),
+  profileHeight: document.getElementById("profile-height"),
+  profileWeight: document.getElementById("profile-weight"),
+  profileSave: document.getElementById("profile-save"),
+  profileStatus: document.getElementById("profile-status"),
+  profileSummary: document.getElementById("profile-summary"),
+  // exerciții
+  homeAddExercise: document.getElementById("home-add-exercise"),
+  addExerciseBtn: document.getElementById("add-exercise-btn"),
+  exerciseModal: document.getElementById("exercise-modal"),
+  exerciseText: document.getElementById("exercise-text"),
+  exerciseEstimate: document.getElementById("exercise-estimate"),
+  exerciseStatus: document.getElementById("exercise-status"),
+  exerciseResult: document.getElementById("exercise-result"),
+  exerciseDatetime: document.getElementById("exercise-datetime"),
+  exerciseSave: document.getElementById("exercise-save"),
+  exerciseCancel: document.getElementById("exercise-cancel"),
+  // modal detalii exercițiu
+  exerciseDetailModal: document.getElementById("exercise-detail-modal"),
+  exerciseDetailTitle: document.getElementById("exercise-detail-title"),
+  exerciseDetailBody: document.getElementById("exercise-detail-body"),
+  exerciseDetailClose: document.getElementById("exercise-detail-close"),
+  // modal detalii masă
+  mealDetailModal: document.getElementById("meal-detail-modal"),
+  mealDetailTitle: document.getElementById("meal-detail-title"),
+  mealDetailBody: document.getElementById("meal-detail-body"),
+  mealDetailClose: document.getElementById("meal-detail-close"),
   // lightbox
   lightbox: document.getElementById("lightbox"),
   lightboxImg: document.getElementById("lightbox-img"),
@@ -192,7 +272,7 @@ el.analyzeBtn.addEventListener("click", async () => {
         el.previewImg.src = t;
       }
     );
-    pending = { thumb, result };
+    pending = { thumb, result, notes: el.notesInput.value.trim() };
     showResult(result);
   } catch (err) {
     el.status.textContent = "Eroare: " + err.message + ". Încearcă din nou.";
@@ -242,7 +322,8 @@ el.saveBtn.addEventListener("click", () => {
     calories: r.calories,
     protein_g: r.protein_g,
     carbs_g: r.carbs_g,
-    fat_g: r.fat_g
+    fat_g: r.fat_g,
+    notes: pending.notes
   });
   resetPreview();
   el.previewCard.classList.add("hidden");
@@ -316,7 +397,7 @@ el.manualAnalyze.addEventListener("click", async () => {
         el.manualPreview.src = t;
       }
     );
-    pendingManual = { thumb, result };
+    pendingManual = { thumb, result, notes: el.manualNotes.value.trim() };
     el.manualStatus.textContent = "";
     el.manualResult.innerHTML = resultHtml(result);
     el.manualResult.classList.remove("hidden");
@@ -351,7 +432,8 @@ el.manualSave.addEventListener("click", () => {
     calories: r.calories,
     protein_g: r.protein_g,
     carbs_g: r.carbs_g,
-    fat_g: r.fat_g
+    fat_g: r.fat_g,
+    notes: pendingManual.notes
   });
   closeManualModal();
   goToDay(ts); // sari la ziua mesei ca să confirmi că s-a așezat corect
@@ -411,10 +493,174 @@ el.readdSave.addEventListener("click", () => {
     calories: s.calories,
     protein_g: s.protein_g,
     carbs_g: s.carbs_g,
-    fat_g: s.fat_g
+    fat_g: s.fat_g,
+    notes: s.notes
   });
   closeReaddModal();
   goToDay(ts);
+});
+
+// ---------------- Profil (date personale) ----------------
+function fillProfileForm() {
+  const p = loadProfile();
+  if (p) {
+    el.profileSex.value = p.sex || "M";
+    el.profileAge.value = p.age || "";
+    el.profileHeight.value = p.height_cm || "";
+    el.profileWeight.value = p.weight_kg || "";
+  }
+  renderProfileSummary();
+}
+
+function renderProfileSummary() {
+  const p = loadProfile();
+  if (!profileComplete(p)) {
+    el.profileSummary.innerHTML = "";
+    return;
+  }
+  const bmi = computeBmi(p.weight_kg, p.height_cm);
+  el.profileSummary.innerHTML = `
+    <div class="profile-metric">
+      <div class="val">${bmi.toFixed(1)}</div>
+      <div class="lbl">IMC · ${bmiCategory(bmi)}</div>
+    </div>
+    <div class="profile-metric">
+      <div class="val">${bodyBurn(p)}</div>
+      <div class="lbl">kcal arse de corp/zi</div>
+    </div>`;
+}
+
+el.profileSave.addEventListener("click", () => {
+  const sex = el.profileSex.value;
+  const age = parseInt(el.profileAge.value, 10);
+  const height_cm = parseFloat(el.profileHeight.value);
+  const weight_kg = parseFloat(el.profileWeight.value);
+  if (!age || !height_cm || !weight_kg) {
+    el.profileStatus.textContent = "Completează vârsta, înălțimea și greutatea.";
+    return;
+  }
+  saveProfile({ sex, age, height_cm, weight_kg });
+  el.profileStatus.textContent = "Salvat ✓";
+  renderProfileSummary();
+  renderStats(); // deficitul depinde de profil
+  setTimeout(() => {
+    el.profileStatus.textContent = "";
+  }, 2000);
+});
+
+// ---------------- Adăugare exercițiu (text -> Claude -> calorii arse) ----------------
+let pendingExercise = null; // { activities, total_calories, total_duration_min, summary }
+
+el.homeAddExercise.addEventListener("click", openExerciseModal);
+el.addExerciseBtn.addEventListener("click", openExerciseModal);
+el.exerciseCancel.addEventListener("click", closeExerciseModal);
+el.exerciseModal.addEventListener("click", (e) => {
+  if (e.target === el.exerciseModal) closeExerciseModal();
+});
+
+function openExerciseModal() {
+  pendingExercise = null;
+  el.exerciseText.value = "";
+  el.exerciseResult.innerHTML = "";
+  el.exerciseResult.classList.add("hidden");
+  el.exerciseStatus.textContent = "";
+  const now = new Date();
+  el.exerciseDatetime.value = toDatetimeLocal(now);
+  el.exerciseDatetime.max = toDatetimeLocal(now); // fără exerciții în viitor
+  el.exerciseSave.disabled = true;
+  el.exerciseModal.classList.remove("hidden");
+}
+function closeExerciseModal() {
+  el.exerciseModal.classList.add("hidden");
+}
+
+// HTML-ul cu rezultatul estimării (defalcare pe activități + total).
+function exerciseResultHtml(d) {
+  const rows = (d.activities || [])
+    .map(
+      (a) =>
+        `<div class="ex-row"><span>${escapeHtml(a.name)} · ${a.duration_min} min</span><span>${a.calories} kcal</span></div>`
+    )
+    .join("");
+  return `
+    <h2>${escapeHtml(d.summary)}</h2>
+    <div class="kcal burned">🔥 ${d.total_calories} kcal arse</div>
+    <div class="ex-breakdown">${rows}</div>
+    <div class="meta">Durată totală: ~${d.total_duration_min} min</div>
+  `;
+}
+
+el.exerciseEstimate.addEventListener("click", async () => {
+  const text = el.exerciseText.value.trim();
+  if (!text) {
+    el.exerciseStatus.textContent = "Scrie ce ai făcut.";
+    return;
+  }
+  const p = loadProfile();
+  if (!profileComplete(p)) {
+    el.exerciseStatus.textContent =
+      "Completează întâi greutatea la Datele mele (pagina Statistici).";
+    return;
+  }
+  el.exerciseEstimate.disabled = true;
+  el.exerciseSave.disabled = true;
+  el.exerciseResult.classList.add("hidden");
+  el.exerciseStatus.textContent = "Estimez... (poate dura câteva secunde)";
+  try {
+    const res = await fetch(EXERCISE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, weight_kg: p.weight_kg })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      throw new Error(data.error || "HTTP " + res.status);
+    }
+    if (!data.activities || data.activities.length === 0) {
+      el.exerciseStatus.textContent =
+        "Nu am recunoscut niciun exercițiu. Reformulează, te rog.";
+      el.exerciseEstimate.disabled = false;
+      return;
+    }
+    pendingExercise = data;
+    el.exerciseStatus.textContent = "";
+    el.exerciseResult.innerHTML = exerciseResultHtml(data);
+    el.exerciseResult.classList.remove("hidden");
+    el.exerciseSave.disabled = false;
+  } catch (err) {
+    el.exerciseStatus.textContent =
+      "Eroare: " + err.message + ". Încearcă din nou.";
+  } finally {
+    el.exerciseEstimate.disabled = false;
+  }
+});
+
+el.exerciseSave.addEventListener("click", () => {
+  if (!pendingExercise) return;
+  const value = el.exerciseDatetime.value;
+  if (!value) {
+    el.exerciseStatus.textContent = "Alege data și ora.";
+    return;
+  }
+  const ts = new Date(value).getTime();
+  if (ts > Date.now()) {
+    el.exerciseStatus.textContent = "Nu poți alege o dată/oră din viitor.";
+    return;
+  }
+  const d = pendingExercise;
+  addEntry({
+    id: newId(),
+    date: dateStrFromTs(ts),
+    ts,
+    type: "exercise",
+    summary: d.summary,
+    total_duration_min: d.total_duration_min,
+    calories: d.total_calories,
+    activities: d.activities
+  });
+  closeExerciseModal();
+  goToDay(ts); // sari la ziua exercițiului
+  switchView("stats");
 });
 
 // ---------------- Statistici ----------------
@@ -525,6 +771,44 @@ el.rangeEnd.addEventListener("change", () => {
   renderStats();
 });
 
+// Blocul cu deficitul caloric: arse de corp + arse activ - mâncate.
+// Pe modul "Zi" arată ziua respectivă; pe perioade mai lungi arată media zilnică.
+function deficitHtml(eatenTotal, burnedActiveTotal, dayCount) {
+  const p = loadProfile();
+  if (!profileComplete(p)) {
+    return `<div class="deficit-hint">Completează „Datele mele" mai sus ca să vezi deficitul caloric.</div>`;
+  }
+  const burnBody = bodyBurn(p);
+
+  let title, eaten, burnedActive, suffix;
+  if (statsMode === "day") {
+    title = "Deficit caloric";
+    eaten = eatenTotal;
+    burnedActive = burnedActiveTotal;
+    suffix = "";
+  } else if (dayCount >= 1) {
+    title = "Deficit mediu zilnic";
+    eaten = Math.round(eatenTotal / dayCount);
+    burnedActive = Math.round(burnedActiveTotal / dayCount);
+    suffix = "/zi";
+  } else {
+    return ""; // perioadă fără date: nimic de mediat
+  }
+
+  const deficit = burnBody + burnedActive - eaten;
+  const isDeficit = deficit >= 0;
+  return `
+    <div class="deficit-card">
+      <div class="deficit-title">${title}</div>
+      <div class="deficit-row"><span>🔥 Arse de corp${suffix}</span><span class="pos">+${burnBody}</span></div>
+      <div class="deficit-row"><span>🏃 Arse activ${suffix}</span><span class="pos">+${burnedActive}</span></div>
+      <div class="deficit-row"><span>🍽 Mâncate${suffix}</span><span class="neg">−${eaten}</span></div>
+      <div class="deficit-total ${isDeficit ? "deficit-good" : "deficit-bad"}">
+        ${isDeficit ? "Deficit" : "Surplus"}: ${Math.abs(deficit)} kcal
+      </div>
+    </div>`;
+}
+
 function renderStats() {
   const [start, end] = periodRange();
   el.periodLabel.textContent = periodLabelText(start, end);
@@ -535,7 +819,11 @@ function renderStats() {
     .filter((e) => e.date >= start && e.date <= end)
     .sort((a, b) => a.ts - b.ts);
 
-  const sum = items.reduce(
+  const meals = items.filter((e) => !isExercise(e));
+  const exercises = items.filter(isExercise);
+
+  // Total mâncat (doar mese) - caloriile arse din exerciții se numără separat.
+  const sum = meals.reduce(
     (acc, e) => {
       acc.calories += e.calories;
       acc.protein_g += e.protein_g;
@@ -545,16 +833,23 @@ function renderStats() {
     },
     { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
   );
+  const burnedActive = exercises.reduce((a, e) => a + e.calories, 0);
 
-  // Zile distincte în care există mese (pentru media zilnică).
+  // Zile distincte în care există intrări (pentru media zilnică).
   const dayKeys = [...new Set(items.map((e) => e.date))];
   const dayCount = dayKeys.length;
 
-  const mealsLbl = `${items.length} ${items.length === 1 ? "masă" : "mese"}`;
+  const countParts = [`${meals.length} ${meals.length === 1 ? "masă" : "mese"}`];
+  if (exercises.length) {
+    countParts.push(
+      `${exercises.length} ${exercises.length === 1 ? "exercițiu" : "exerciții"}`
+    );
+  }
+  const countLbl = countParts.join(" · ");
   const totalLbl =
     dayCount >= 2
-      ? `Total perioadă · ${mealsLbl} · ${dayCount} zile`
-      : `Total · ${mealsLbl}`;
+      ? `Total perioadă · ${countLbl} · ${dayCount} zile`
+      : `Total · ${countLbl}`;
 
   // Media zilnică apare doar de la 2 zile cu date în sus (pe o zi ar fi redundantă).
   let avgHtml = "";
@@ -577,6 +872,7 @@ function renderStats() {
       <div class="macro"><div class="val">${sum.fat_g}g</div><div class="lbl">Grăsimi</div></div>
     </div>
     ${avgHtml}
+    ${deficitHtml(sum.calories, burnedActive, dayCount)}
   `;
 
   if (items.length === 0) {
@@ -596,7 +892,9 @@ function renderStats() {
   el.entries.innerHTML = days
     .map((date) => {
       const dayItems = byDay.get(date);
-      const dayKcal = dayItems.reduce((a, e) => a + e.calories, 0);
+      const dayKcal = dayItems
+        .filter((e) => !isExercise(e))
+        .reduce((a, e) => a + e.calories, 0);
       const header = showDayHeaders
         ? `<div class="day-header"><span>${prettyDate(date)}</span><span>${dayKcal} kcal</span></div>`
         : "";
@@ -606,11 +904,12 @@ function renderStats() {
 }
 
 function entryHtml(e) {
+  if (isExercise(e)) return exerciseEntryHtml(e);
   const thumb = e.thumb
     ? `<img src="${e.thumb}" class="entry-thumb" alt="${escapeHtml(e.food_name)}" />`
     : `<div class="entry-thumb placeholder">🍽</div>`;
   return `
-    <div class="entry">
+    <div class="entry entry-meal" data-id="${e.id}" title="Vezi detalii">
       ${thumb}
       <div class="info">
         <div class="name">${escapeHtml(e.food_name)}</div>
@@ -619,6 +918,62 @@ function entryHtml(e) {
       </div>
       <div class="entry-actions">
         <button class="readd" data-id="${e.id}" title="Adaugă din nou">🔁</button>
+        <button class="del" data-id="${e.id}" title="Șterge">🗑</button>
+      </div>
+    </div>`;
+}
+
+// Emoji-ul thumbnail-ului: se ia după activitatea cu cele mai multe calorii.
+const EXERCISE_EMOJI = [
+  [["inot", "innotat", "balaciala", "piscina"], "🏊"],
+  [["alerg", "jogging", "sprint", "fuga"], "🏃"],
+  [["biciclet", "ciclism", "spinning"], "🚴"],
+  [["sala", "greutati", "fitness", "gym", "musculatura", "pumping"], "🏋️"],
+  [["cardio"], "🫀"],
+  [["yoga", "stretching", "pilates"], "🧘"],
+  [["fotbal", "soccer"], "⚽"],
+  [["tenis"], "🎾"],
+  [["baschet"], "🏀"],
+  [["volei"], "🏐"],
+  [["dans", "zumba"], "💃"],
+  [["box", "kickbox"], "🥊"],
+  [["hiking", "munte", "trekking", "mers"], "🥾"],
+  [["schi", "ski"], "⛷️"],
+  [["karate", "judo", "arte martiale"], "🥋"],
+  [["inlinere", "role"], "🛼"],
+];
+
+function exerciseEmoji(activities) {
+  if (!activities || !activities.length) return "🏃";
+  const top = activities.reduce((best, a) =>
+    (a.calories || 0) > (best.calories || 0) ? a : best,
+  );
+  const name = (top.name || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+  for (const [keywords, emoji] of EXERCISE_EMOJI) {
+    if (keywords.some((k) => name.includes(k))) return emoji;
+  }
+  return "🏃";
+}
+
+function exerciseEntryHtml(e) {
+  const detail =
+    e.activities && e.activities.length
+      ? e.activities
+          .map((a) => `${escapeHtml(a.name)} ${a.duration_min}min`)
+          .join(" · ")
+      : escapeHtml(e.summary || "Exercițiu");
+  return `
+    <div class="entry entry-exercise" data-id="${e.id}" title="Vezi detalii">
+      <div class="entry-thumb exercise-icon">${exerciseEmoji(e.activities)}</div>
+      <div class="info">
+        <div class="name">${escapeHtml(e.summary || "Exercițiu")}</div>
+        <div class="sub">${detail} · ${prettyTime(e.ts)}</div>
+        <div class="kcal burned">−${e.calories} kcal</div>
+      </div>
+      <div class="entry-actions">
         <button class="del" data-id="${e.id}" title="Șterge">🗑</button>
       </div>
     </div>`;
@@ -638,7 +993,90 @@ el.entries.addEventListener("click", (e) => {
     return;
   }
   const img = e.target.closest("img.entry-thumb");
-  if (img) openLightbox(img.src);
+  if (img) {
+    openLightbox(img.src);
+    return;
+  }
+  const exEntry = e.target.closest(".entry-exercise");
+  if (exEntry) {
+    openExerciseDetail(exEntry.dataset.id);
+    return;
+  }
+  const mealEntry = e.target.closest(".entry-meal");
+  if (mealEntry) openMealDetail(mealEntry.dataset.id);
+});
+
+// Modal cu detaliile unei mese: macro, gramaj, ora și notițele adăugate.
+function openMealDetail(id) {
+  const e = loadEntries().find((x) => x.id === id);
+  if (!e) return;
+  el.mealDetailTitle.textContent = e.food_name || "Masă";
+  const notes = (e.notes || "").trim();
+  const notesHtml = notes
+    ? `<div class="detail-notes"><div class="detail-notes-lbl">Notițe</div><div class="detail-notes-txt">${escapeHtml(notes)}</div></div>`
+    : `<div class="detail-notes detail-notes-empty">Fără notițe la această masă.</div>`;
+  const thumb = e.thumb
+    ? `<img src="${e.thumb}" class="detail-photo" alt="${escapeHtml(e.food_name)}" />`
+    : "";
+  el.mealDetailBody.innerHTML = `
+    ${thumb}
+    <div class="kcal">${e.calories} kcal</div>
+    <div class="macros">
+      <div class="macro"><div class="val">${e.protein_g}g</div><div class="lbl">Proteine</div></div>
+      <div class="macro"><div class="val">${e.carbs_g}g</div><div class="lbl">Carbo</div></div>
+      <div class="macro"><div class="val">${e.fat_g}g</div><div class="lbl">Grăsimi</div></div>
+    </div>
+    <div class="meta">Porție estimată: ~${e.grams}g · ${prettyTime(e.ts)}</div>
+    ${notesHtml}
+  `;
+  el.mealDetailModal.classList.remove("hidden");
+}
+function closeMealDetail() {
+  el.mealDetailModal.classList.add("hidden");
+}
+el.mealDetailClose.addEventListener("click", closeMealDetail);
+el.mealDetailModal.addEventListener("click", (e) => {
+  if (e.target === el.mealDetailModal) closeMealDetail();
+});
+
+// Modal cu defalcarea pe activități a unui exercițiu salvat.
+function openExerciseDetail(id) {
+  const entry = loadEntries().find((x) => x.id === id);
+  if (!entry) return;
+  el.exerciseDetailTitle.textContent = entry.summary || "Exercițiu";
+  // Fallback pentru intrări fără listă de activități: arată o singură linie din total.
+  const acts =
+    entry.activities && entry.activities.length
+      ? entry.activities
+      : [
+          {
+            name: entry.summary || "Exercițiu",
+            duration_min: entry.total_duration_min || 0,
+            calories: entry.calories
+          }
+        ];
+  const totalMin =
+    entry.total_duration_min ||
+    acts.reduce((s, a) => s + (a.duration_min || 0), 0);
+  const rows = acts
+    .map(
+      (a) =>
+        `<div class="ex-row"><span>${escapeHtml(a.name)} · ${a.duration_min} min</span><span>${a.calories} kcal</span></div>`
+    )
+    .join("");
+  el.exerciseDetailBody.innerHTML = `
+    <div class="kcal burned">🔥 ${entry.calories} kcal arse</div>
+    <div class="ex-breakdown">${rows}</div>
+    <div class="meta">Durată totală: ~${totalMin} min · ${prettyTime(entry.ts)}</div>
+  `;
+  el.exerciseDetailModal.classList.remove("hidden");
+}
+function closeExerciseDetail() {
+  el.exerciseDetailModal.classList.add("hidden");
+}
+el.exerciseDetailClose.addEventListener("click", closeExerciseDetail);
+el.exerciseDetailModal.addEventListener("click", (e) => {
+  if (e.target === el.exerciseDetailModal) closeExerciseDetail();
 });
 
 // ---------------- Lightbox (poză mărită) ----------------
@@ -654,6 +1092,7 @@ el.lightbox.addEventListener("click", () => {
 // ---------------- Navigare între tab-uri ----------------
 function switchView(view) {
   const isHome = view === "home";
+  localStorage.setItem(VIEW_KEY, view); // ține minte pagina la refresh
   el.viewHome.classList.toggle("active", isHome);
   el.viewStats.classList.toggle("active", !isHome);
   document.querySelectorAll(".tab").forEach((t) => {
@@ -681,4 +1120,7 @@ el.rangeStart.value = customStart;
 el.rangeEnd.value = customEnd;
 el.rangeStart.max = todayStr(); // calendarul nu lasă să alegi zile viitoare
 el.rangeEnd.max = todayStr();
+fillProfileForm();
 renderStats();
+// Rămâi pe pagina la care erai înainte de refresh (implicit Acasă).
+switchView(localStorage.getItem(VIEW_KEY) || "home");
