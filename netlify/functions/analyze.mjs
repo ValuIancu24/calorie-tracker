@@ -1,7 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Clientul citeste automat cheia din variabila de mediu ANTHROPIC_API_KEY.
-const client = new Anthropic();
+// Netlify AI Gateway suprascrie la runtime variabila ANTHROPIC_API_KEY cu un token rotativ
+// propriu si deviaza apelul prin gateway-ul lor (platit din creditele Netlify). Ca sa folosim
+// cheia TA reala si sa platim din contul TAU Anthropic, o citim din ANTHROPIC_DIRECT_KEY
+// (nume pe care gateway-ul nu-l fura) si fortam adresa directa. Local (fara gateway) cade pe
+// ANTHROPIC_API_KEY din .env.
+const DIRECT_KEY =
+  process.env.ANTHROPIC_DIRECT_KEY || process.env.ANTHROPIC_API_KEY;
+
+const client = new Anthropic({
+  apiKey: DIRECT_KEY,
+  baseURL: "https://api.anthropic.com"
+});
 
 const SYSTEM = `Esti un nutritionist care estimeaza valorile nutritionale dintr-o poza cu mancare.
 
@@ -21,10 +31,16 @@ Reguli stricte:
   {"food_name":"Nedetectat","grams":0,"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":"scazuta"}`;
 
 export default async (req) => {
-  // DEBUG temporar: ultimele 4 caractere ale cheii folosite efectiv de functie.
+  // DEBUG temporar: ultimele 4 caractere ale cheii folosite efectiv (DIRECT_KEY).
+  // Dupa fix trebuie sa fie STABILE (cheia ta reala), nu sa se schimbe la fiecare request.
   console.log(
     "Cheie folosita (ultimele 4):",
-    String(process.env.ANTHROPIC_API_KEY || "").slice(-4) || "(goala)"
+    String(DIRECT_KEY || "").slice(-4) || "(goala)"
+  );
+  // DEBUG temporar: ce adresa injecteaza Netlify (AI Gateway). O ocolim prin baseURL explicit.
+  console.log(
+    "ANTHROPIC_BASE_URL injectat de Netlify:",
+    process.env.ANTHROPIC_BASE_URL || "(niciunul)"
   );
 
   if (req.method !== "POST") {
