@@ -31,18 +31,6 @@ Reguli stricte:
   {"food_name":"Nedetectat","grams":0,"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":"scazuta"}`;
 
 export default async (req) => {
-  // DEBUG temporar: ultimele 4 caractere ale cheii folosite efectiv (DIRECT_KEY).
-  // Dupa fix trebuie sa fie STABILE (cheia ta reala), nu sa se schimbe la fiecare request.
-  console.log(
-    "Cheie folosita (ultimele 4):",
-    String(DIRECT_KEY || "").slice(-4) || "(goala)"
-  );
-  // DEBUG temporar: ce adresa injecteaza Netlify (AI Gateway). O ocolim prin baseURL explicit.
-  console.log(
-    "ANTHROPIC_BASE_URL injectat de Netlify:",
-    process.env.ANTHROPIC_BASE_URL || "(niciunul)"
-  );
-
   if (req.method !== "POST") {
     return json({ error: "Foloseste metoda POST." }, 405);
   }
