@@ -148,6 +148,7 @@ const el = {
   readdModal: document.getElementById("readd-modal"),
   readdSummary: document.getElementById("readd-summary"),
   readdDatetime: document.getElementById("readd-datetime"),
+  readdStatus: document.getElementById("readd-status"),
   readdSave: document.getElementById("readd-save"),
   readdCancel: document.getElementById("readd-cancel"),
   // lightbox
@@ -335,6 +336,10 @@ el.manualSave.addEventListener("click", () => {
     return;
   }
   const ts = new Date(value).getTime();
+  if (ts > Date.now()) {
+    el.manualStatus.textContent = "Nu poți alege o dată/oră din viitor.";
+    return;
+  }
   const r = pendingManual.result;
   addEntry({
     id: newId(),
@@ -375,6 +380,7 @@ function openReaddModal(entry) {
   const now = new Date();
   el.readdDatetime.value = toDatetimeLocal(now);
   el.readdDatetime.max = toDatetimeLocal(now);
+  el.readdStatus.textContent = "";
   el.readdModal.classList.remove("hidden");
 }
 function closeReaddModal() {
@@ -385,8 +391,15 @@ function closeReaddModal() {
 el.readdSave.addEventListener("click", () => {
   if (!pendingReadd) return;
   const value = el.readdDatetime.value;
-  if (!value) return;
+  if (!value) {
+    el.readdStatus.textContent = "Alege data și ora.";
+    return;
+  }
   const ts = new Date(value).getTime();
+  if (ts > Date.now()) {
+    el.readdStatus.textContent = "Nu poți alege o dată/oră din viitor.";
+    return;
+  }
   const s = pendingReadd;
   addEntry({
     id: newId(),

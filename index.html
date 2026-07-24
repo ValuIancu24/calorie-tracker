@@ -21,14 +21,8 @@
       <!-- ============ ACASĂ ============ -->
       <section id="view-home" class="view active">
         <div class="upload-card">
-          <label for="photo-input" class="upload-btn">📷 Fă o poză mâncării</label>
-          <input
-            id="photo-input"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-          />
+          <label for="photo-input" class="upload-btn">📷 Adaugă o poză cu mâncare</label>
+          <input id="photo-input" type="file" accept="image/*" hidden />
           <p class="hint">
             Sfat: pune o furculiță lângă farfurie pentru o estimare mai bună a porției.
           </p>
@@ -125,6 +119,7 @@
           Data și ora mesei
           <input type="datetime-local" id="readd-datetime" />
         </label>
+        <div id="readd-status" class="status"></div>
         <div class="modal-actions">
           <button id="readd-save" class="primary-btn">Adaugă</button>
           <button id="readd-cancel" class="ghost-btn">Renunță</button>
