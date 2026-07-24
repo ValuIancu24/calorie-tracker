@@ -7,6 +7,8 @@
   --muted: #6b7280;
   --border: #e5e7eb;
   --danger: #dc2626;
+  --orange: #ea580c;
+  --purple: #7c3aed;
 }
 
 * {
@@ -18,8 +20,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  /* spatiu pentru bara de jos */
-  padding-bottom: 72px;
+  padding-bottom: 24px;
 }
 
 /* ---------- Header ---------- */
@@ -27,6 +28,11 @@ body {
   background: var(--green);
   color: #fff;
   padding: 16px 20px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.app-header-top {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -181,7 +187,7 @@ main {
 .totals .total-kcal {
   font-size: 36px;
   font-weight: 800;
-  color: var(--green);
+  color: var(--purple);
 }
 .totals .total-lbl {
   color: var(--muted);
@@ -522,31 +528,232 @@ main {
   border-radius: 12px;
 }
 
-/* ---------- Bara de jos ---------- */
+/* ---------- Bara de navigație (sus, pe verde) ---------- */
 .tabbar {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 64px;
-  background: var(--card);
-  border-top: 1px solid var(--border);
   display: flex;
+  gap: 8px;
+  margin-top: 14px;
 }
 .tab {
   flex: 1;
-  background: none;
+  background: rgba(255, 255, 255, 0.18);
   border: none;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
   cursor: pointer;
+  padding: 9px;
+  border-radius: 10px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 6px;
 }
 .tab.active {
+  background: #fff;
   color: var(--green);
+}
+
+/* ---------- Card exercițiu (Acasă) ---------- */
+.exercise-card {
+  margin-top: 16px;
+}
+
+/* ---------- Card date personale (Statistici) ---------- */
+.profile-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 14px;
+}
+.profile-card h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.profile-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.profile-fields .field {
+  margin-top: 0;
+}
+.profile-fields select,
+.profile-fields input {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--card);
+  width: 100%;
+}
+.profile-card .primary-btn {
+  width: 100%;
+  margin-top: 14px;
+}
+.profile-summary {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.profile-summary:empty {
+  display: none;
+}
+.profile-metric {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 12px;
+  text-align: center;
+}
+.profile-metric .val {
+  font-weight: 800;
+  font-size: 22px;
+  color: var(--green);
+}
+.profile-metric .lbl {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ---------- Rând cu butoane de adăugare ---------- */
+.add-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.add-row .add-manual-btn {
+  margin-bottom: 0;
+}
+
+/* ---------- Rezultat exercițiu (în modal) ---------- */
+.result .kcal.burned {
+  color: var(--orange);
+}
+.ex-breakdown {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ex-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 14px;
+}
+.ex-row span:last-child {
   font-weight: 600;
+  color: var(--orange);
+  flex-shrink: 0;
+}
+
+/* ---------- Intrare de tip exercițiu (listă) ---------- */
+.entry-thumb.exercise-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff7ed;
+  font-size: 28px;
+  cursor: default;
+}
+.entry .info .kcal.burned {
+  color: var(--orange);
+}
+.entry-exercise,
+.entry-meal {
+  cursor: pointer;
+}
+.entry-exercise:active,
+.entry-meal:active {
+  background: var(--bg);
+}
+/* butoanele din card raman cu cursor normal, nu de card clickabil */
+.entry-actions button {
+  cursor: pointer;
+}
+
+/* ---------- Modal detalii masă ---------- */
+.detail-photo {
+  width: 100%;
+  border-radius: 12px;
+  display: block;
+  margin-bottom: 12px;
+}
+.detail-notes {
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 10px;
+}
+.detail-notes-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.detail-notes-txt {
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.detail-notes-empty {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ---------- Card deficit caloric ---------- */
+.deficit-card {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+.deficit-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 10px;
+}
+.deficit-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  padding: 3px 0;
+}
+.deficit-row span:last-child {
+  font-weight: 600;
+}
+.deficit-row .pos {
+  color: var(--green);
+}
+.deficit-row .neg {
+  color: var(--danger);
+}
+.deficit-total {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+.deficit-total.deficit-good {
+  color: var(--green);
+}
+.deficit-total.deficit-bad {
+  color: var(--danger);
+}
+.deficit-hint {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
 }
