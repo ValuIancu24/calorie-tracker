@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Clientul citeste automat cheia din variabila de mediu ANTHROPIC_API_KEY.
-const client = new Anthropic();
+// Fortam apelul DIRECT catre Anthropic (baseURL explicit), ca sa ocolim AI Gateway-ul
+// pe care Netlify il injecteaza automat. Astfel consumul intra pe contul si creditele
+// TALE Anthropic, nu pe creditele Netlify. `baseURL` explicit are prioritate fata de
+// orice adresa pusa de Netlify in ANTHROPIC_BASE_URL.
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  baseURL: "https://api.anthropic.com"
+});
 
 const SYSTEM = `Esti un nutritionist care estimeaza valorile nutritionale dintr-o poza cu mancare.
 
@@ -25,6 +31,11 @@ export default async (req) => {
   console.log(
     "Cheie folosita (ultimele 4):",
     String(process.env.ANTHROPIC_API_KEY || "").slice(-4) || "(goala)"
+  );
+  // DEBUG temporar: ce adresa injecteaza Netlify (AI Gateway). O ocolim prin baseURL explicit.
+  console.log(
+    "ANTHROPIC_BASE_URL injectat de Netlify:",
+    process.env.ANTHROPIC_BASE_URL || "(niciunul)"
   );
 
   if (req.method !== "POST") {
