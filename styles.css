@@ -531,23 +531,25 @@ main {
 /* ---------- Bara de navigație (sus, pe verde) ---------- */
 .tabbar {
   display: flex;
-  gap: 8px;
+  gap: 5px;
   margin-top: 14px;
 }
 .tab {
   flex: 1;
+  min-width: 0;
   background: rgba(255, 255, 255, 0.18);
   border: none;
-  font-size: 14px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #fff;
   cursor: pointer;
-  padding: 9px;
+  padding: 8px 3px;
   border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 3px;
+  white-space: nowrap;
 }
 .tab.active {
   background: #fff;
@@ -617,6 +619,37 @@ main {
   font-size: 12px;
   color: var(--muted);
   margin-top: 2px;
+}
+
+/* Card „Datele mele" read-only (valori preluate automat) */
+.profile-readonly {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.profile-ro {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 12px;
+}
+.profile-ro .ro-lbl {
+  font-size: 12px;
+  color: var(--muted);
+}
+.profile-ro .ro-val {
+  font-size: 16px;
+  font-weight: 700;
+}
+.profile-card .ghost-btn {
+  width: 100%;
+  margin-top: 14px;
+}
+/* Formularul de onboarding de pe Acasă */
+.onboarding-card .onboarding-intro {
+  margin-top: 0;
 }
 
 /* ---------- Rând cu butoane de adăugare ---------- */
@@ -756,4 +789,470 @@ main {
   font-size: 13px;
   color: var(--muted);
   text-align: center;
+}
+
+/* ---------- Datele mele: greutate read-only + nivel activitate ---------- */
+#profile-weight[readonly] {
+  background: var(--bg);
+  color: var(--muted);
+  cursor: default;
+}
+.profile-weight-hint {
+  margin: 10px 0 0;
+  text-align: left;
+}
+.profile-activity-field {
+  margin-top: 12px;
+}
+.activity-card .profile-activity-field {
+  margin-top: 0;
+}
+.profile-activity-hint {
+  margin: 8px 0 0;
+  text-align: left;
+}
+.profile-activity-field select {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 15px;
+  font-family: inherit;
+  background: var(--card);
+  width: 100%;
+}
+
+/* ---------- Buton „Creează Raport" ---------- */
+.report-create-btn {
+  width: 100%;
+  background: var(--card);
+  color: var(--purple);
+  border: 1px dashed var(--purple);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 16px;
+}
+.report-create-btn:active {
+  background: var(--bg);
+}
+
+/* ---------- Pagina Cântărire ---------- */
+.weigh-form h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.weigh-fields {
+  display: grid;
+  gap: 10px;
+}
+.weigh-fields .field {
+  margin-top: 0;
+}
+.weigh-form .primary-btn {
+  width: 100%;
+  margin-top: 14px;
+}
+.weigh-history {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.weigh-row {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.weigh-row .weigh-kg {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--green);
+}
+.weigh-row .weigh-when {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.weigh-row .del {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+/* ---------- Pagina Rapoarte: listă de foi ---------- */
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.report-sheet {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.report-sheet:active {
+  background: var(--bg);
+}
+.report-sheet-info {
+  min-width: 0;
+}
+.report-sheet-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+.report-sheet-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.report-sheet .del {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+/* ---------- Raport deschis ---------- */
+.report-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.report-toolbar .ghost-btn,
+.report-toolbar .primary-btn {
+  flex: 1;
+}
+.report-print {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+}
+.report-print h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+.report-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.report-weight {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 8px 0 14px;
+}
+.report-grid {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.report-stat {
+  flex: 1;
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 14px 10px;
+  text-align: center;
+}
+.report-stat .val {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--purple);
+}
+.report-stat .lbl {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 4px;
+  font-size: 14px;
+}
+.report-table th {
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.report-table th:first-child {
+  text-align: left;
+}
+.report-table td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.report-table td:first-child {
+  text-align: left;
+  color: var(--muted);
+}
+.report-deficit {
+  margin-top: 14px;
+}
+.report-deficit .deficit-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  padding: 3px 0;
+}
+.report-print .deficit-total {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+.weight-chart {
+  width: 100%;
+  height: auto;
+  background: var(--bg);
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+.report-chart-empty {
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+/* ---------- Calendar pentru selectorul de perioadă ---------- */
+.period-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 100;
+  padding: 12px;
+}
+.period-picker-card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 16px;
+  width: 100%;
+  max-width: 360px;
+}
+.pp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.pp-arrow {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 10px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text);
+  cursor: pointer;
+}
+.pp-arrow:active {
+  background: var(--bg);
+}
+.pp-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pp-title {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  font-size: 16px;
+}
+.pp-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+.pp-weekdays span {
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.pp-day {
+  aspect-ratio: 1 / 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pp-day:active {
+  background: var(--bg);
+}
+.pp-day.pp-out {
+  color: var(--muted);
+  opacity: 0.55;
+}
+.pp-day.pp-today {
+  outline: 1px solid var(--green);
+}
+.pp-day.pp-selected {
+  background: var(--green);
+  color: #fff;
+}
+.pp-day:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.pp-weeks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pp-week-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  padding: 2px;
+  cursor: pointer;
+}
+.pp-week-row:active {
+  background: var(--bg);
+}
+.pp-week-row.pp-selected {
+  background: var(--green);
+}
+.pp-week-row.pp-selected .pp-wd {
+  color: #fff;
+}
+.pp-week-row:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.pp-wd {
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pp-wd.pp-out {
+  color: var(--muted);
+  opacity: 0.6;
+}
+.pp-wd.pp-today {
+  outline: 1px solid var(--green);
+  border-radius: 7px;
+}
+.pp-months,
+.pp-years {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.pp-month,
+.pp-year {
+  padding: 14px 4px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pp-month:active,
+.pp-year:active {
+  background: var(--bg);
+}
+.pp-month.pp-selected,
+.pp-year.pp-selected {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green);
+}
+.pp-month:disabled,
+.pp-year:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.period-label.pp-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.period-label.pp-clickable::after {
+  content: " ▾";
+  font-size: 12px;
+  color: var(--muted);
+}
+.period-label.pp-clickable:active {
+  color: var(--green);
+}
+
+/* ---------- Print / export PDF (fără librării): doar raportul deschis ---------- */
+@media print {
+  body {
+    background: #fff;
+    padding: 0;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .report-print,
+  .report-print * {
+    visibility: visible;
+  }
+  .report-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: none;
+    border-radius: 0;
+    padding: 24px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .no-print {
+    display: none !important;
+  }
 }

@@ -3,13 +3,24 @@
 const STORAGE_KEY = "ct_entries";
 const PROFILE_KEY = "ct_profile";
 const VIEW_KEY = "ct_view";
+const WEIGHTS_KEY = "ct_weights";
+const ACTIVITY_KEY = "ct_activity";
+const REPORTS_KEY = "ct_reports";
 const API_URL = "/.netlify/functions/analyze";
 const EXERCISE_URL = "/.netlify/functions/exercise";
 
-// Factor de activitate peste metabolismul bazal (BMR) pentru "cat arde corpul intr-o zi
-// normala, fara sport intentionat". Exercitiile logate se adauga separat deasupra, ca sa
-// nu numaram sportul de doua ori.
-const ACTIVITY_FACTOR = 1.2;
+// Niveluri de activitate peste metabolismul bazal (BMR): "cat arde corpul intr-o zi normala".
+// Factorii clasici Mifflin-St Jeor. Exercitiile logate se adauga separat deasupra, ca sa nu
+// numaram sportul de doua ori.
+const ACTIVITY_LEVELS = [
+  { key: "sedentar", label: "Sedentar", factor: 1.2 },
+  { key: "usor", label: "Ușor activ", factor: 1.375 },
+  { key: "moderat", label: "Moderat activ", factor: 1.55 },
+  { key: "foarte", label: "Foarte activ", factor: 1.725 },
+  { key: "extra", label: "Extra activ", factor: 1.9 }
+];
+// Factorul folosit pentru zilele dinaintea oricarei schimbari de nivel (pastreaza vechiul comportament).
+const DEFAULT_ACTIVITY_FACTOR = 1.2;
 
 // ---------------- Utilitare dată ----------------
 // Data locală în format YYYY-MM-DD dintr-un obiect Date. Cheia după care grupăm mesele pe zile.
@@ -73,6 +84,110 @@ function isExercise(e) {
   return e.type === "exercise";
 }
 
+// ---------------- Cantariri (istoric greutate) ----------------
+function loadWeights() {
+  try {
+    return JSON.parse(localStorage.getItem(WEIGHTS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+function saveWeights(ws) {
+  localStorage.setItem(WEIGHTS_KEY, JSON.stringify(ws));
+}
+function addWeight(w) {
+  const ws = loadWeights();
+  ws.push(w);
+  saveWeights(ws);
+}
+function deleteWeight(id) {
+  saveWeights(loadWeights().filter((w) => w.id !== id));
+}
+
+// ---------------- Nivel de activitate (hartă per-zi, editabilă pe orice perioadă) ----------------
+// Model: { "YYYY-MM-DD": levelKey }. O atribuire pe interval scrie fiecare zi din el
+// (suprascrie ce era acolo). Zilele neatribuite = Sedentar (implicit).
+function loadActivityMap() {
+  let raw;
+  try {
+    raw = JSON.parse(localStorage.getItem(ACTIVITY_KEY));
+  } catch {
+    raw = null;
+  }
+  if (!raw) return {};
+  if (Array.isArray(raw)) {
+    // Migrare din formatul vechi (listă de schimbări „forward") în hartă per-zi.
+    const map = migrateActivityArray(raw);
+    localStorage.setItem(ACTIVITY_KEY, JSON.stringify(map));
+    return map;
+  }
+  return raw;
+}
+function saveActivityMap(map) {
+  localStorage.setItem(ACTIVITY_KEY, JSON.stringify(map));
+}
+
+// Iterează fiecare zi (YYYY-MM-DD) din [start, end] inclusiv. Ora 12:00 evită salturi DST.
+function eachDayInclusive(start, end, cb) {
+  const d = new Date(start + "T12:00:00");
+  const last = new Date(end + "T12:00:00");
+  while (d <= last) {
+    cb(dateStrFromDate(d));
+    d.setDate(d.getDate() + 1);
+  }
+}
+
+// Câte zile sunt în [start, end] inclusiv.
+function countDaysInclusive(start, end) {
+  let n = 0;
+  eachDayInclusive(start, end, () => n++);
+  return n;
+}
+
+// Atribuie un nivel tuturor zilelor dintr-o perioadă (suprascrie).
+function setActivityForRange(start, end, levelKey) {
+  const map = loadActivityMap();
+  eachDayInclusive(start, end, (day) => {
+    map[day] = levelKey;
+  });
+  saveActivityMap(map);
+}
+
+// Migrare: fiecare schimbare veche umple zilele de la data ei până înaintea următoarei (ultima până azi).
+function migrateActivityArray(arr) {
+  const map = {};
+  const sorted = arr
+    .slice()
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.ts - b.ts));
+  const today = todayStr();
+  for (let i = 0; i < sorted.length; i++) {
+    const from = sorted[i].date;
+    let to = today;
+    if (i + 1 < sorted.length) {
+      const nd = new Date(sorted[i + 1].date + "T12:00:00");
+      nd.setDate(nd.getDate() - 1);
+      to = dateStrFromDate(nd);
+    }
+    if (from <= to) eachDayInclusive(from, to, (day) => (map[day] = sorted[i].level));
+  }
+  return map;
+}
+
+// ---------------- Rapoarte ----------------
+function loadReports() {
+  try {
+    return JSON.parse(localStorage.getItem(REPORTS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+function saveReports(r) {
+  localStorage.setItem(REPORTS_KEY, JSON.stringify(r));
+}
+function deleteReport(id) {
+  saveReports(loadReports().filter((r) => r.id !== id));
+}
+
 // ---------------- Profil + formule (IMC / BMR / deficit) ----------------
 function loadProfile() {
   try {
@@ -85,7 +200,18 @@ function saveProfile(p) {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
 }
 function profileComplete(p) {
-  return !!(p && p.sex && p.age > 0 && p.height_cm > 0 && p.weight_kg > 0);
+  return !!(p && p.sex && p.birthdate && p.height_cm > 0 && p.weight_kg > 0);
+}
+
+// Vârsta (ani împliniți) la o dată dată, calculată din data nașterii (YYYY-MM-DD).
+// Fără argument, folosește ziua de azi. Așa aplicația știe mereu vârsta corectă, fără s-o edităm.
+function ageFromBirthdate(birthdate, atDateStr) {
+  if (!birthdate) return 0;
+  const [by, bm, bd] = birthdate.split("-").map(Number);
+  const at = (atDateStr || todayStr()).split("-").map(Number);
+  let age = at[0] - by;
+  if (at[1] < bm || (at[1] === bm && at[2] < bd)) age--;
+  return age > 0 ? age : 0;
 }
 
 // Indice de masa corporala = kg / m^2.
@@ -101,14 +227,87 @@ function bmiCategory(bmi) {
   return "obezitate";
 }
 
-// Metabolism bazal (Mifflin-St Jeor) - are nevoie de sex.
-function computeBmr(p) {
-  const base = 10 * p.weight_kg + 6.25 * p.height_cm - 5 * p.age;
+// Greutatea activa la o data (YYYY-MM-DD): ultima cantarire cu date <= target.
+// Daca nu exista niciuna inainte, ia cea mai veche cantarire; altfel greutatea din profil.
+function weightForDate(dateStr) {
+  const ws = loadWeights();
+  if (ws.length) {
+    const sorted = ws
+      .slice()
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.ts - b.ts));
+    let chosen = null;
+    for (const w of sorted) {
+      if (w.date <= dateStr) chosen = w;
+      else break;
+    }
+    return (chosen || sorted[0]).weight_kg;
+  }
+  const p = loadProfile();
+  return p && p.weight_kg ? p.weight_kg : 0;
+}
+
+// Nivelul de activitate al unei zile: ce e atribuit în hartă; altfel Sedentar (implicit).
+function activityForDate(dateStr) {
+  const key = loadActivityMap()[dateStr];
+  const lvl = key && ACTIVITY_LEVELS.find((l) => l.key === key);
+  if (lvl) return { level: lvl.key, factor: lvl.factor };
+  return { level: "sedentar", factor: DEFAULT_ACTIVITY_FACTOR };
+}
+
+// Nivelul comun al unei perioade (levelKey) sau null dacă zilele au niveluri diferite.
+function periodActivityLevel(start, end) {
+  const map = loadActivityMap();
+  const valid = (k) => (k && ACTIVITY_LEVELS.some((l) => l.key === k) ? k : "sedentar");
+  let level = null;
+  let first = true;
+  let mixed = false;
+  eachDayInclusive(start, end, (day) => {
+    if (mixed) return;
+    const k = valid(map[day]);
+    if (first) {
+      level = k;
+      first = false;
+    } else if (k !== level) {
+      mixed = true;
+    }
+  });
+  return mixed ? null : level;
+}
+
+// Media zilnică a caloriilor arse de corp pe zilele TRĂITE din perioadă (start..azi inclusiv,
+// fără viitor). Fiecare zi cu greutatea/activitatea ei. Zilele viitoare nu se numără: ne interesează
+// cât ai ars efectiv, nu cât „ai arde" dacă greutatea ar rămâne neschimbată până la final.
+function avgBodyBurnForPeriod(start, end) {
+  if (!profileComplete(loadProfile())) return 0;
+  const today = todayStr();
+  if (start > today) return 0; // perioadă integral în viitor
+  const effEnd = end < today ? end : today;
+  let sum = 0;
+  let n = 0;
+  eachDayInclusive(start, effEnd, (day) => {
+    sum += bodyBurnForDate(day);
+    n++;
+  });
+  return n ? Math.round(sum / n) : 0;
+}
+
+// Metabolism bazal (Mifflin-St Jeor) pentru o greutate data + inaltimea/sexul curente si varsta
+// la data ceruta (derivata din data nasterii; fara dateStr = varsta de azi).
+function bmrFor(weightKg, dateStr) {
+  const p = loadProfile();
+  if (!p) return 0;
+  const age = ageFromBirthdate(p.birthdate, dateStr);
+  const base = 10 * weightKg + 6.25 * p.height_cm - 5 * age;
   return p.sex === "F" ? base - 161 : base + 5;
 }
-// Cate calorii arde corpul intr-o zi normala (BMR * factor sedentar).
-function bodyBurn(p) {
-  return Math.round(computeBmr(p) * ACTIVITY_FACTOR);
+
+// Cate calorii arde corpul intr-o zi anume: BMR(greutatea + varsta de atunci) * factorul de activitate de atunci.
+function bodyBurnForDate(dateStr) {
+  const p = loadProfile();
+  if (!profileComplete(p)) return 0;
+  const w = weightForDate(dateStr);
+  const { factor } = activityForDate(dateStr);
+  return Math.round(bmrFor(w, dateStr) * factor);
 }
 
 // ---------------- Imagini ----------------
@@ -184,6 +383,7 @@ const el = {
   rangeStart: document.getElementById("range-start"),
   rangeEnd: document.getElementById("range-end"),
   addManualBtn: document.getElementById("add-manual-btn"),
+  addRow: document.getElementById("stats-add-row"),
   // modal adăugare manuală
   manualModal: document.getElementById("manual-modal"),
   manualPhoto: document.getElementById("manual-photo"),
@@ -202,14 +402,43 @@ const el = {
   readdStatus: document.getElementById("readd-status"),
   readdSave: document.getElementById("readd-save"),
   readdCancel: document.getElementById("readd-cancel"),
-  // profil (date personale)
-  profileSex: document.getElementById("profile-sex"),
-  profileAge: document.getElementById("profile-age"),
-  profileHeight: document.getElementById("profile-height"),
-  profileWeight: document.getElementById("profile-weight"),
-  profileSave: document.getElementById("profile-save"),
-  profileStatus: document.getElementById("profile-status"),
+  statsReportBtn: document.getElementById("stats-report-btn"),
+  // formular date personale (Acasă)
+  onboardingCard: document.getElementById("onboarding-card"),
+  onbSex: document.getElementById("onb-sex"),
+  onbBirthdate: document.getElementById("onb-birthdate"),
+  onbHeight: document.getElementById("onb-height"),
+  onbWeight: document.getElementById("onb-weight"),
+  onbSave: document.getElementById("onb-save"),
+  onbStatus: document.getElementById("onb-status"),
+  // profil (date personale) - card read-only pe Statistici
+  profileCard: document.getElementById("profile-card"),
+  profileSexVal: document.getElementById("profile-sex-val"),
+  profileAgeVal: document.getElementById("profile-age-val"),
+  profileHeightVal: document.getElementById("profile-height-val"),
+  profileWeightVal: document.getElementById("profile-weight-val"),
+  profileEdit: document.getElementById("profile-edit"),
+  profileActivity: document.getElementById("profile-activity"),
   profileSummary: document.getElementById("profile-summary"),
+  activityStatus: document.getElementById("activity-status"),
+  // cântărire
+  weighInput: document.getElementById("weigh-input"),
+  weighDatetime: document.getElementById("weigh-datetime"),
+  weighSave: document.getElementById("weigh-save"),
+  weighStatus: document.getElementById("weigh-status"),
+  weighHistory: document.getElementById("weigh-history"),
+  weighReportBtn: document.getElementById("weigh-report-btn"),
+  weighPeriodModes: document.getElementById("weigh-period-modes"),
+  weighPeriodNav: document.getElementById("weigh-period-nav"),
+  weighPeriodPrev: document.getElementById("weigh-period-prev"),
+  weighPeriodNext: document.getElementById("weigh-period-next"),
+  weighPeriodLabel: document.getElementById("weigh-period-label"),
+  weighPeriodRange: document.getElementById("weigh-period-range"),
+  weighRangeStart: document.getElementById("weigh-range-start"),
+  weighRangeEnd: document.getElementById("weigh-range-end"),
+  // rapoarte
+  reportsList: document.getElementById("reports-list"),
+  reportDetail: document.getElementById("report-detail"),
   // exerciții
   homeAddExercise: document.getElementById("home-add-exercise"),
   addExerciseBtn: document.getElementById("add-exercise-btn"),
@@ -234,9 +463,17 @@ const el = {
   // lightbox
   lightbox: document.getElementById("lightbox"),
   lightboxImg: document.getElementById("lightbox-img"),
+  // selector calendar pentru perioadă
+  periodPicker: document.getElementById("period-picker"),
+  ppPrev: document.getElementById("pp-prev"),
+  ppNext: document.getElementById("pp-next"),
+  ppTitle: document.getElementById("pp-title"),
+  ppBody: document.getElementById("pp-body"),
   // views
   viewHome: document.getElementById("view-home"),
-  viewStats: document.getElementById("view-stats")
+  viewStats: document.getElementById("view-stats"),
+  viewWeigh: document.getElementById("view-weigh"),
+  viewReports: document.getElementById("view-reports")
 };
 
 // ---------------- Flux poză -> analiză (Acasă) ----------------
@@ -348,6 +585,21 @@ el.manualModal.addEventListener("click", (e) => {
   if (e.target === el.manualModal) closeManualModal(); // click pe fundal = închide
 });
 
+// Data/ora implicită pentru o intrare nouă adăugată din Statistici: ziua selectată (mod „Zi")
+// combinată cu ora curentă. Dacă ziua selectată e chiar azi (sau nu suntem pe mod „Zi"), e „acum".
+// Valoarea rămâne editabilă în modal; doar punctul de pornire se schimbă, pentru comoditate.
+function defaultEntryDatetime() {
+  const now = new Date();
+  if (statsPeriod.mode === "day") {
+    const [day] = periodRangeFor(statsPeriod); // YYYY-MM-DD
+    if (day < todayStr()) {
+      const [y, m, d] = day.split("-").map(Number);
+      return toDatetimeLocal(new Date(y, m - 1, d, now.getHours(), now.getMinutes()));
+    }
+  }
+  return toDatetimeLocal(now);
+}
+
 function openManualModal() {
   manualFile = null;
   pendingManual = null;
@@ -359,7 +611,7 @@ function openManualModal() {
   el.manualResult.classList.add("hidden");
   el.manualStatus.textContent = "";
   const now = new Date();
-  el.manualDatetime.value = toDatetimeLocal(now);
+  el.manualDatetime.value = defaultEntryDatetime(); // ziua selectată pe Statistici + ora curentă
   el.manualDatetime.max = toDatetimeLocal(now); // fără mese în viitor
   el.manualAnalyze.disabled = true;
   el.manualSave.disabled = true;
@@ -501,71 +753,177 @@ el.readdSave.addEventListener("click", () => {
 });
 
 // ---------------- Profil (date personale) ----------------
-function fillProfileForm() {
+// Cardul „Datele mele" de pe Statistici e doar afișare. Toate valorile sunt preluate automat:
+// greutatea + vârsta la data cerută (implicit azi), plus sexul și înălțimea din profil.
+function fillProfileCard(atDate) {
   const p = loadProfile();
-  if (p) {
-    el.profileSex.value = p.sex || "M";
-    el.profileAge.value = p.age || "";
-    el.profileHeight.value = p.height_cm || "";
-    el.profileWeight.value = p.weight_kg || "";
+  const date = atDate || todayStr();
+  if (p && profileComplete(p)) {
+    el.profileSexVal.textContent = p.sex === "F" ? "Femeie" : "Bărbat";
+    el.profileAgeVal.textContent = `${ageFromBirthdate(p.birthdate, date)} ani`;
+    el.profileHeightVal.textContent = `${p.height_cm} cm`;
+    const w = weightForDate(date);
+    el.profileWeightVal.textContent = w ? `${w} kg` : "–";
+  } else {
+    el.profileSexVal.textContent = "–";
+    el.profileAgeVal.textContent = "–";
+    el.profileHeightVal.textContent = "–";
+    el.profileWeightVal.textContent = "–";
   }
   renderProfileSummary();
+  syncActivityControl();
 }
 
+// IMC + kcal arse/zi pentru perioada selectată pe Statistici (cardul e dinamic pe perioadă).
 function renderProfileSummary() {
   const p = loadProfile();
   if (!profileComplete(p)) {
     el.profileSummary.innerHTML = "";
     return;
   }
-  const bmi = computeBmi(p.weight_kg, p.height_cm);
+  const [start, end] = periodRangeFor(statsPeriod);
+  const w = weightForDate(end); // greutatea la sfârșitul perioadei
+  const bmi = computeBmi(w, p.height_cm);
+  const burn = avgBodyBurnForPeriod(start, end);
+  const burnLbl =
+    statsPeriod.mode === "day" ? "kcal arse de corp/zi" : "kcal arse de corp/zi (medie)";
   el.profileSummary.innerHTML = `
     <div class="profile-metric">
       <div class="val">${bmi.toFixed(1)}</div>
       <div class="lbl">IMC · ${bmiCategory(bmi)}</div>
     </div>
     <div class="profile-metric">
-      <div class="val">${bodyBurn(p)}</div>
-      <div class="lbl">kcal arse de corp/zi</div>
+      <div class="val">${burn}</div>
+      <div class="lbl">${burnLbl}</div>
     </div>`;
 }
 
-el.profileSave.addEventListener("click", () => {
-  const sex = el.profileSex.value;
-  const age = parseInt(el.profileAge.value, 10);
-  const height_cm = parseFloat(el.profileHeight.value);
-  const weight_kg = parseFloat(el.profileWeight.value);
-  if (!age || !height_cm || !weight_kg) {
-    el.profileStatus.textContent = "Completează vârsta, înălțimea și greutatea.";
+// Pune în dropdown nivelul perioadei selectate (sau placeholder-ul „mixt" dacă zilele diferă).
+function syncActivityControl() {
+  const [start, end] = periodRangeFor(statsPeriod);
+  el.profileActivity.value = periodActivityLevel(start, end) || "";
+}
+
+// Alegerea unui nivel îl aplică pe TOATĂ perioada selectată (suprascrie) și recalculează.
+el.profileActivity.addEventListener("change", () => {
+  const level = el.profileActivity.value;
+  if (!level) return; // placeholder-ul „mixt", nu se poate alege efectiv
+  const [start, end] = periodRangeFor(statsPeriod);
+  setActivityForRange(start, end, level);
+  renderStats(); // recalculează cardul + deficitul + lista
+  const label = start === end ? prettyDate(start) : `${prettyDate(start)} - ${prettyDate(end)}`;
+  el.activityStatus.textContent = `Nivel aplicat pe ${label} ✓`;
+  setTimeout(() => {
+    el.activityStatus.textContent = "";
+  }, 2000);
+});
+
+// Butonul „Modifică datele" de pe Statistici deschide formularul de pe Acasă, precompletat,
+// chiar dacă profilul e deja complet (altfel n-ai ce edita).
+el.profileEdit.addEventListener("click", () => {
+  switchView("home");
+  el.onboardingCard.classList.remove("hidden");
+  prefillOnboarding();
+  el.onboardingCard.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// ---------------- Formular date personale (Acasă) ----------------
+// Prefill: pentru userii care au deja date (sau schema veche), completăm ce știm deja,
+// ca migrarea să fie „completează data nașterii și salvează".
+function prefillOnboarding() {
+  const p = loadProfile();
+  if (p) {
+    if (p.sex) el.onbSex.value = p.sex;
+    if (p.birthdate) el.onbBirthdate.value = p.birthdate;
+    if (p.height_cm) el.onbHeight.value = p.height_cm;
+  }
+  const w = weightForDate(todayStr());
+  el.onbWeight.value = w || "";
+  // Nu poți alege o dată a nașterii din viitor.
+  el.onbBirthdate.max = todayStr();
+}
+
+// Formularul apare cât timp profilul e incomplet în schema nouă (lipsă sex/dată naștere/înălțime,
+// sau nicio greutate). Prinde automat și userii vechi: ei au `age`, dar nu `birthdate`.
+function showOnboardingIfNeeded() {
+  const need = !profileComplete(loadProfile());
+  el.onboardingCard.classList.toggle("hidden", !need);
+  if (need) prefillOnboarding();
+}
+
+el.onbSave.addEventListener("click", () => {
+  const sex = el.onbSex.value;
+  const birthdate = el.onbBirthdate.value; // YYYY-MM-DD
+  const height_cm = parseFloat(el.onbHeight.value);
+  const weight_kg = parseFloat(el.onbWeight.value);
+
+  if (!sex || !birthdate || !height_cm || !weight_kg) {
+    el.onbStatus.textContent = "Completează toate câmpurile.";
     return;
   }
-  saveProfile({ sex, age, height_cm, weight_kg });
-  el.profileStatus.textContent = "Salvat ✓";
-  renderProfileSummary();
-  renderStats(); // deficitul depinde de profil
+  if (birthdate > todayStr()) {
+    el.onbStatus.textContent = "Data nașterii nu poate fi în viitor.";
+    return;
+  }
+  const age = ageFromBirthdate(birthdate);
+  if (age < 1 || age > 120) {
+    el.onbStatus.textContent = "Verifică data nașterii.";
+    return;
+  }
+  if (height_cm < 50 || height_cm > 250) {
+    el.onbStatus.textContent = "Introdu o înălțime validă (50 - 250 cm).";
+    return;
+  }
+  if (weight_kg < 20 || weight_kg > 400) {
+    el.onbStatus.textContent = "Introdu o greutate validă (20 - 400 kg).";
+    return;
+  }
+
+  // Greutatea trece prin sistemul de cântăriri (unica sursă de adevăr), doar dacă diferă de
+  // ultima cântărire de azi - ca să nu creăm dubluri la userii care se cântăresc deja.
+  if (weightForDate(todayStr()) !== weight_kg) {
+    addWeight({ id: newId(), ts: Date.now(), date: todayStr(), weight_kg });
+  }
+  saveProfile({ sex, birthdate, height_cm, weight_kg });
+
+  el.onbStatus.textContent = "Salvat ✓";
+  showOnboardingIfNeeded(); // profilul e complet acum -> formularul se ascunde
+  fillProfileCard(todayStr());
+  renderStats(); // cardul + deficitul depind de profil
+  renderWeigh();
   setTimeout(() => {
-    el.profileStatus.textContent = "";
+    el.onbStatus.textContent = "";
   }, 2000);
 });
 
 // ---------------- Adăugare exercițiu (text -> Claude -> calorii arse) ----------------
 let pendingExercise = null; // { activities, total_calories, total_duration_min, summary }
+let exerciseEstimateDate = null; // ziua pentru care s-a calculat estimarea curentă (greutatea ei)
 
-el.homeAddExercise.addEventListener("click", openExerciseModal);
-el.addExerciseBtn.addEventListener("click", openExerciseModal);
+// Ziua (YYYY-MM-DD) aleasă în câmpul de dată al exercițiului (implicit azi).
+function exerciseDateFromField() {
+  return el.exerciseDatetime.value
+    ? dateStrFromTs(new Date(el.exerciseDatetime.value).getTime())
+    : todayStr();
+}
+
+el.homeAddExercise.addEventListener("click", () => openExerciseModal(false)); // Acasă: mereu „acum"
+el.addExerciseBtn.addEventListener("click", () => openExerciseModal(true)); // Statistici: ziua selectată
 el.exerciseCancel.addEventListener("click", closeExerciseModal);
 el.exerciseModal.addEventListener("click", (e) => {
   if (e.target === el.exerciseModal) closeExerciseModal();
 });
 
-function openExerciseModal() {
+function openExerciseModal(useSelectedDay) {
   pendingExercise = null;
+  exerciseEstimateDate = null;
   el.exerciseText.value = "";
   el.exerciseResult.innerHTML = "";
   el.exerciseResult.classList.add("hidden");
   el.exerciseStatus.textContent = "";
   const now = new Date();
-  el.exerciseDatetime.value = toDatetimeLocal(now);
+  // De pe Statistici: ziua selectată + ora curentă. De pe Acasă („Astăzi"): mereu acum.
+  el.exerciseDatetime.value = useSelectedDay ? defaultEntryDatetime() : toDatetimeLocal(now);
   el.exerciseDatetime.max = toDatetimeLocal(now); // fără exerciții în viitor
   el.exerciseSave.disabled = true;
   el.exerciseModal.classList.remove("hidden");
@@ -599,9 +957,13 @@ el.exerciseEstimate.addEventListener("click", async () => {
   const p = loadProfile();
   if (!profileComplete(p)) {
     el.exerciseStatus.textContent =
-      "Completează întâi greutatea la Datele mele (pagina Statistici).";
+      "Completează întâi profilul (Datele mele) și loghează o greutate (pagina Cântărire).";
     return;
   }
+  // Greutatea folosită la estimare = cea a zilei alese pentru exercițiu (nu cea de azi),
+  // ca să pot loga corect și exerciții pentru zile din trecut.
+  const exDate = exerciseDateFromField();
+  const exWeight = weightForDate(exDate);
   el.exerciseEstimate.disabled = true;
   el.exerciseSave.disabled = true;
   el.exerciseResult.classList.add("hidden");
@@ -610,7 +972,7 @@ el.exerciseEstimate.addEventListener("click", async () => {
     const res = await fetch(EXERCISE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, weight_kg: p.weight_kg })
+      body: JSON.stringify({ text, weight_kg: exWeight })
     });
     const data = await res.json();
     if (!res.ok || data.error) {
@@ -623,6 +985,8 @@ el.exerciseEstimate.addEventListener("click", async () => {
       return;
     }
     pendingExercise = data;
+    pendingExercise.weight_kg = exWeight; // reținem greutatea folosită la calcul
+    exerciseEstimateDate = exDate; // și ziua pentru care s-a calculat
     el.exerciseStatus.textContent = "";
     el.exerciseResult.innerHTML = exerciseResultHtml(data);
     el.exerciseResult.classList.remove("hidden");
@@ -633,6 +997,20 @@ el.exerciseEstimate.addEventListener("click", async () => {
   } finally {
     el.exerciseEstimate.disabled = false;
   }
+});
+
+// Dacă schimbi ZIUA după ce ai estimat, greutatea acelei zile poate diferi -> estimarea nu mai e
+// validă. O invalidăm și ceri o nouă estimare (schimbarea doar a orei, în aceeași zi, nu contează).
+el.exerciseDatetime.addEventListener("change", () => {
+  if (!pendingExercise) return;
+  if (exerciseDateFromField() === exerciseEstimateDate) return;
+  pendingExercise = null;
+  exerciseEstimateDate = null;
+  el.exerciseResult.innerHTML = "";
+  el.exerciseResult.classList.add("hidden");
+  el.exerciseSave.disabled = true;
+  el.exerciseStatus.textContent =
+    "Ai schimbat ziua. Apasă din nou „Estimează” (se folosește greutatea din ziua aleasă).";
 });
 
 el.exerciseSave.addEventListener("click", () => {
@@ -656,32 +1034,41 @@ el.exerciseSave.addEventListener("click", () => {
     summary: d.summary,
     total_duration_min: d.total_duration_min,
     calories: d.total_calories,
-    activities: d.activities
+    activities: d.activities,
+    weight_kg: d.weight_kg // greutatea folosită la calcul (ziua aleasă)
   });
   closeExerciseModal();
   goToDay(ts); // sari la ziua exercițiului
   switchView("stats");
 });
 
-// ---------------- Statistici ----------------
-let statsMode = "day"; // day | week | month | year | custom
-let anchor = new Date(); // referință pentru zi/săpt/lună/an
-let customStart = todayStr();
-let customEnd = todayStr();
+// ---------------- Selector de perioadă (reutilizat: Statistici + Cântărire) ----------------
+function makePeriodState() {
+  return {
+    mode: "day", // day | week | month | year | custom
+    anchor: new Date(), // referință pentru zi/săpt/lună/an
+    customStart: todayStr(),
+    customEnd: todayStr()
+  };
+}
+const statsPeriod = makePeriodState();
+const weighPeriod = makePeriodState();
+let statsCfg = null; // configurările de wiring, completate la init
+let weighCfg = null;
 
-// Intervalul [start, end] (YYYY-MM-DD, inclusiv la ambele capete) pentru modul curent.
-function periodRange() {
-  if (statsMode === "custom") {
-    return customStart <= customEnd
-      ? [customStart, customEnd]
-      : [customEnd, customStart];
+// Intervalul [start, end] (YYYY-MM-DD, inclusiv la ambele capete) pentru o stare de perioadă.
+function periodRangeFor(st) {
+  if (st.mode === "custom") {
+    return st.customStart <= st.customEnd
+      ? [st.customStart, st.customEnd]
+      : [st.customEnd, st.customStart];
   }
-  const d = new Date(anchor);
-  if (statsMode === "day") {
+  const d = new Date(st.anchor);
+  if (st.mode === "day") {
     const s = dateStrFromDate(d);
     return [s, s];
   }
-  if (statsMode === "week") {
+  if (st.mode === "week") {
     const offset = (d.getDay() + 6) % 7; // 0 = luni
     const start = new Date(d);
     start.setDate(d.getDate() - offset);
@@ -689,7 +1076,7 @@ function periodRange() {
     end.setDate(start.getDate() + 6);
     return [dateStrFromDate(start), dateStrFromDate(end)];
   }
-  if (statsMode === "month") {
+  if (st.mode === "month") {
     const start = new Date(d.getFullYear(), d.getMonth(), 1);
     const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     return [dateStrFromDate(start), dateStrFromDate(end)];
@@ -700,11 +1087,11 @@ function periodRange() {
   return [dateStrFromDate(start), dateStrFromDate(end)];
 }
 
-function periodLabelText(start, end) {
-  if (statsMode === "day") return prettyDate(start);
-  if (statsMode === "year") return start.slice(0, 4);
-  if (statsMode === "month") {
-    const label = new Date(anchor).toLocaleDateString("ro-RO", {
+function periodLabelTextFor(st, start, end) {
+  if (st.mode === "day") return prettyDate(start);
+  if (st.mode === "year") return start.slice(0, 4);
+  if (st.mode === "month") {
+    const label = new Date(st.anchor).toLocaleDateString("ro-RO", {
       month: "long",
       year: "numeric"
     });
@@ -714,82 +1101,333 @@ function periodLabelText(start, end) {
   return `${prettyDate(start)} - ${prettyDate(end)}`;
 }
 
-function shiftAnchor(dir) {
-  const d = new Date(anchor);
-  if (statsMode === "day") d.setDate(d.getDate() + dir);
-  else if (statsMode === "week") d.setDate(d.getDate() + dir * 7);
-  else if (statsMode === "month") d.setMonth(d.getMonth() + dir);
-  else if (statsMode === "year") d.setFullYear(d.getFullYear() + dir);
-  anchor = d;
-  renderStats();
-}
-
 // Sincronizează butoanele + ce se vede (navigare vs interval) cu modul curent.
-function syncModeUI(mode) {
-  el.periodModes.querySelectorAll(".period-mode").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === mode);
+function syncPeriodUI(cfg) {
+  cfg.modes.querySelectorAll(".period-mode").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === cfg.state.mode);
   });
-  el.periodNav.classList.toggle("hidden", mode === "custom");
-  el.periodRange.classList.toggle("hidden", mode !== "custom");
+  cfg.nav.classList.toggle("hidden", cfg.state.mode === "custom");
+  cfg.range.classList.toggle("hidden", cfg.state.mode !== "custom");
 }
 
-function setMode(mode) {
-  statsMode = mode;
+function setPeriodMode(cfg, mode) {
+  cfg.state.mode = mode;
   if (mode === "custom") {
-    customStart = todayStr();
-    customEnd = todayStr();
-    el.rangeStart.value = customStart;
-    el.rangeEnd.value = customEnd;
+    cfg.state.customStart = todayStr();
+    cfg.state.customEnd = todayStr();
+    cfg.rangeStart.value = cfg.state.customStart;
+    cfg.rangeEnd.value = cfg.state.customEnd;
   } else {
-    anchor = new Date();
+    cfg.state.anchor = new Date();
   }
-  syncModeUI(mode);
-  renderStats();
+  syncPeriodUI(cfg);
+  cfg.render();
 }
 
-// Sari la vederea pe o zi anume (folosit după ce adaugi o masă).
+function shiftPeriod(cfg, dir) {
+  const st = cfg.state;
+  const d = new Date(st.anchor);
+  if (st.mode === "day") d.setDate(d.getDate() + dir);
+  else if (st.mode === "week") d.setDate(d.getDate() + dir * 7);
+  else if (st.mode === "month") d.setMonth(d.getMonth() + dir);
+  else if (st.mode === "year") d.setFullYear(d.getFullYear() + dir);
+  st.anchor = d;
+  cfg.render();
+}
+
+// Leagă evenimentele pentru un selector de perioadă (elementele DOM + stare + callback render).
+function setupPeriodSelector(cfg) {
+  cfg.modes.addEventListener("click", (e) => {
+    const btn = e.target.closest(".period-mode");
+    if (btn) setPeriodMode(cfg, btn.dataset.mode);
+  });
+  cfg.prev.addEventListener("click", () => shiftPeriod(cfg, -1));
+  cfg.next.addEventListener("click", () => shiftPeriod(cfg, 1));
+  cfg.rangeStart.addEventListener("change", () => {
+    cfg.state.customStart = cfg.rangeStart.value || todayStr();
+    cfg.render();
+  });
+  cfg.rangeEnd.addEventListener("change", () => {
+    cfg.state.customEnd = cfg.rangeEnd.value || todayStr();
+    cfg.render();
+  });
+  cfg.rangeStart.value = cfg.state.customStart;
+  cfg.rangeEnd.value = cfg.state.customEnd;
+  cfg.rangeStart.max = todayStr(); // calendarul nu lasă să alegi zile viitoare
+  cfg.rangeEnd.max = todayStr();
+  // Click pe etichetă => deschide calendarul (salt direct la zi/săpt./lună/an).
+  cfg.label.classList.add("pp-clickable");
+  cfg.label.addEventListener("click", () => openPeriodPicker(cfg));
+}
+
+// Sari la vederea pe o zi anume pe Statistici (folosit după ce adaugi o masă/exercițiu).
 function goToDay(ts) {
-  statsMode = "day";
-  anchor = new Date(ts);
-  syncModeUI("day");
+  statsPeriod.mode = "day";
+  statsPeriod.anchor = new Date(ts);
+  if (statsCfg) syncPeriodUI(statsCfg);
   renderStats();
 }
 
-// Wiring selector
-el.periodModes.addEventListener("click", (e) => {
-  const btn = e.target.closest(".period-mode");
-  if (btn) setMode(btn.dataset.mode);
+// ---------------- Selector prin calendar (click pe eticheta perioadei) ----------------
+// Deschide un calendar peste selector ca să sari direct la o zi/săptămână/lună/an, fără zeci de
+// click-uri pe săgeți. Modul curent (Zi/Săpt./Lună/An) decide ce alegi. „Interval" nu are calendar
+// aici: are deja câmpurile lui de dată.
+const MONTHS_RO = [
+  "Ianuarie", "Februarie", "Martie", "Aprilie", "Mai", "Iunie",
+  "Iulie", "August", "Septembrie", "Octombrie", "Noiembrie", "Decembrie"
+];
+const MONTHS_RO_SHORT = [
+  "Ian", "Feb", "Mar", "Apr", "Mai", "Iun",
+  "Iul", "Aug", "Sep", "Oct", "Nov", "Dec"
+];
+const WEEKDAYS_RO = ["Lu", "Ma", "Mi", "Jo", "Vi", "Sâ", "Du"];
+
+let pickerCfg = null;  // selectorul editat (statsCfg / weighCfg)
+let pickerView = null; // luna/anul afișat în calendar (diferit de selecția efectivă)
+
+function openPeriodPicker(cfg) {
+  if (cfg.state.mode === "custom") return; // intervalul are deja câmpurile lui
+  pickerCfg = cfg;
+  pickerView = new Date(cfg.state.anchor);
+  renderPeriodPicker();
+  el.periodPicker.classList.remove("hidden");
+}
+function closePeriodPicker() {
+  el.periodPicker.classList.add("hidden");
+  pickerCfg = null;
+}
+
+function renderPeriodPicker() {
+  const mode = pickerCfg.state.mode;
+  if (mode === "day") renderPickerDays();
+  else if (mode === "week") renderPickerWeeks();
+  else if (mode === "month") renderPickerMonths();
+  else renderPickerYears();
+}
+
+// Prima zi (luni) a gridului de 6 săptămâni pentru luna afișată în calendar.
+function pickerGridStart() {
+  const y = pickerView.getFullYear();
+  const m = pickerView.getMonth();
+  const first = new Date(y, m, 1);
+  const offset = (first.getDay() + 6) % 7; // luni = 0
+  return new Date(y, m, 1 - offset);
+}
+
+// Săgeata „›" nu duce în luna/anul viitor (nu putem alege perioade din viitor).
+function pickerNextDisabledForMonth() {
+  const now = new Date();
+  const y = pickerView.getFullYear();
+  const m = pickerView.getMonth();
+  return y > now.getFullYear() || (y === now.getFullYear() && m >= now.getMonth());
+}
+
+function renderPickerDays() {
+  const m = pickerView.getMonth();
+  el.ppTitle.textContent = `${MONTHS_RO[m]} ${pickerView.getFullYear()}`;
+  el.ppPrev.disabled = false;
+  el.ppNext.disabled = pickerNextDisabledForMonth();
+
+  const today = todayStr();
+  const [selStart, selEnd] = periodRangeFor(pickerCfg.state);
+  const gridStart = pickerGridStart();
+  let cells = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    const ds = dateStrFromDate(d);
+    const cls = [
+      "pp-day",
+      d.getMonth() === m ? "" : "pp-out",
+      ds >= selStart && ds <= selEnd ? "pp-selected" : "",
+      ds === today ? "pp-today" : ""
+    ].filter(Boolean).join(" ");
+    cells += `<button type="button" class="${cls}" data-date="${ds}" ${ds > today ? "disabled" : ""}>${d.getDate()}</button>`;
+  }
+  el.ppBody.innerHTML =
+    `<div class="pp-weekdays">${WEEKDAYS_RO.map((w) => `<span>${w}</span>`).join("")}</div>` +
+    `<div class="pp-grid">${cells}</div>`;
+}
+
+function renderPickerWeeks() {
+  const m = pickerView.getMonth();
+  el.ppTitle.textContent = `${MONTHS_RO[m]} ${pickerView.getFullYear()}`;
+  el.ppPrev.disabled = false;
+  el.ppNext.disabled = pickerNextDisabledForMonth();
+
+  const today = todayStr();
+  const [selStart] = periodRangeFor(pickerCfg.state); // lunea săptămânii selectate
+  const gridStart = pickerGridStart();
+  let rows = "";
+  for (let r = 0; r < 6; r++) {
+    const rowStart = new Date(gridStart);
+    rowStart.setDate(gridStart.getDate() + r * 7);
+    const rowStartStr = dateStrFromDate(rowStart); // e mereu o zi de luni
+    let days = "";
+    for (let c = 0; c < 7; c++) {
+      const d = new Date(rowStart);
+      d.setDate(rowStart.getDate() + c);
+      const dcls = [
+        "pp-wd",
+        d.getMonth() === m ? "" : "pp-out",
+        dateStrFromDate(d) === today ? "pp-today" : ""
+      ].filter(Boolean).join(" ");
+      days += `<span class="${dcls}">${d.getDate()}</span>`;
+    }
+    const selected = rowStartStr === selStart ? "pp-selected" : "";
+    rows += `<button type="button" class="pp-week-row ${selected}" data-date="${rowStartStr}" ${rowStartStr > today ? "disabled" : ""}>${days}</button>`;
+  }
+  el.ppBody.innerHTML =
+    `<div class="pp-weekdays">${WEEKDAYS_RO.map((w) => `<span>${w}</span>`).join("")}</div>` +
+    `<div class="pp-weeks">${rows}</div>`;
+}
+
+function renderPickerMonths() {
+  const y = pickerView.getFullYear();
+  const now = new Date();
+  el.ppTitle.textContent = String(y);
+  el.ppPrev.disabled = false;
+  el.ppNext.disabled = y >= now.getFullYear();
+
+  const [selStart] = periodRangeFor(pickerCfg.state);
+  const selY = Number(selStart.slice(0, 4));
+  const selM = Number(selStart.slice(5, 7)) - 1;
+  let cells = "";
+  for (let mo = 0; mo < 12; mo++) {
+    const disabled = y > now.getFullYear() || (y === now.getFullYear() && mo > now.getMonth());
+    const selected = y === selY && mo === selM ? "pp-selected" : "";
+    cells += `<button type="button" class="pp-month ${selected}" data-month="${mo}" ${disabled ? "disabled" : ""}>${MONTHS_RO_SHORT[mo]}</button>`;
+  }
+  el.ppBody.innerHTML = `<div class="pp-months">${cells}</div>`;
+}
+
+function renderPickerYears() {
+  const now = new Date();
+  const base = Math.floor(pickerView.getFullYear() / 12) * 12;
+  el.ppTitle.textContent = `${base} - ${base + 11}`;
+  el.ppPrev.disabled = false;
+  el.ppNext.disabled = base + 12 > now.getFullYear();
+
+  const [selStart] = periodRangeFor(pickerCfg.state);
+  const selY = Number(selStart.slice(0, 4));
+  let cells = "";
+  for (let i = 0; i < 12; i++) {
+    const yr = base + i;
+    const selected = yr === selY ? "pp-selected" : "";
+    cells += `<button type="button" class="pp-year ${selected}" data-year="${yr}" ${yr > now.getFullYear() ? "disabled" : ""}>${yr}</button>`;
+  }
+  el.ppBody.innerHTML = `<div class="pp-years">${cells}</div>`;
+}
+
+// Săgețile calendarului schimbă doar ce se vede, nu selecția.
+function shiftPicker(dir) {
+  const mode = pickerCfg.state.mode;
+  if (mode === "day" || mode === "week") pickerView.setMonth(pickerView.getMonth() + dir);
+  else if (mode === "month") pickerView.setFullYear(pickerView.getFullYear() + dir);
+  else pickerView.setFullYear(pickerView.getFullYear() + dir * 12);
+  renderPeriodPicker();
+}
+el.ppPrev.addEventListener("click", () => shiftPicker(-1));
+el.ppNext.addEventListener("click", () => shiftPicker(1));
+
+// Alegerea unei celule aplică selecția pe selectorul curent și re-randează pagina.
+el.ppBody.addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn || btn.disabled || !pickerCfg) return;
+  const cfg = pickerCfg;
+  const st = cfg.state;
+  if (btn.dataset.date !== undefined) {
+    st.anchor = new Date(btn.dataset.date + "T12:00:00"); // zi sau lunea săptămânii
+  } else if (btn.dataset.month !== undefined) {
+    st.anchor = new Date(pickerView.getFullYear(), Number(btn.dataset.month), 1, 12);
+  } else if (btn.dataset.year !== undefined) {
+    st.anchor = new Date(Number(btn.dataset.year), 0, 1, 12);
+  } else {
+    return;
+  }
+  closePeriodPicker();
+  cfg.render();
 });
-el.periodPrev.addEventListener("click", () => shiftAnchor(-1));
-el.periodNext.addEventListener("click", () => shiftAnchor(1));
-el.rangeStart.addEventListener("change", () => {
-  customStart = el.rangeStart.value || todayStr();
-  renderStats();
+
+// Închidere la click pe fundal.
+el.periodPicker.addEventListener("click", (e) => {
+  if (e.target === el.periodPicker) closePeriodPicker();
 });
-el.rangeEnd.addEventListener("change", () => {
-  customEnd = el.rangeEnd.value || todayStr();
-  renderStats();
-});
+
+// ---------------- Calcul agregat pe o perioadă (folosit de Statistici ȘI Rapoarte) ----------------
+function computePeriodStats(start, end) {
+  const items = loadEntries()
+    .filter((e) => e.date >= start && e.date <= end)
+    .sort((a, b) => a.ts - b.ts);
+  const meals = items.filter((e) => !isExercise(e));
+  const exercises = items.filter(isExercise);
+  // Total mâncat (doar mese) - caloriile arse din exerciții se numără separat.
+  const eaten = meals.reduce(
+    (acc, e) => {
+      acc.calories += e.calories;
+      acc.protein_g += e.protein_g;
+      acc.carbs_g += e.carbs_g;
+      acc.fat_g += e.fat_g;
+      return acc;
+    },
+    { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
+  );
+  const burnedActive = exercises.reduce((a, e) => a + e.calories, 0);
+  // Zile distincte cu intrări (informativ: câte zile chiar ai logat ceva).
+  const dayKeys = [...new Set(items.map((e) => e.date))].sort();
+
+  // Mediem pe zilele TRĂITE din perioadă: de la început până azi inclusiv, fără viitor. Toate
+  // aceste zile contează la medii (chiar și cele fără nimic logat), fiindcă le-ai trăit efectiv.
+  const today = todayStr();
+  const hasPast = start <= today;
+  const effEnd = end < today ? end : today;
+  const effectiveDayCount = hasPast ? countDaysInclusive(start, effEnd) : 0;
+
+  // Arse de corp: suma pe fiecare zi trăită din perioadă (cu greutatea/activitatea din ziua ei).
+  let bodyBurnTotal = 0;
+  if (profileComplete(loadProfile()) && hasPast) {
+    eachDayInclusive(start, effEnd, (d) => {
+      bodyBurnTotal += bodyBurnForDate(d);
+    });
+  }
+
+  const weights = loadWeights()
+    .filter((w) => w.date >= start && w.date <= end)
+    .sort((a, b) => a.ts - b.ts);
+  return {
+    items,
+    meals,
+    exercises,
+    eaten,
+    burnedActive,
+    dayKeys,
+    dayCount: dayKeys.length,
+    effectiveDayCount,
+    bodyBurnTotal,
+    weights
+  };
+}
 
 // Blocul cu deficitul caloric: arse de corp + arse activ - mâncate.
 // Pe modul "Zi" arată ziua respectivă; pe perioade mai lungi arată media zilnică.
-function deficitHtml(eatenTotal, burnedActiveTotal, dayCount) {
+function deficitHtml(eatenTotal, burnedActiveTotal, bodyBurnTotal, effectiveDayCount, mode) {
   const p = loadProfile();
   if (!profileComplete(p)) {
-    return `<div class="deficit-hint">Completează „Datele mele" mai sus ca să vezi deficitul caloric.</div>`;
+    return `<div class="deficit-hint">Completează „Datele mele" (pe modul Zi) ca să vezi deficitul caloric.</div>`;
   }
-  const burnBody = bodyBurn(p);
 
-  let title, eaten, burnedActive, suffix;
-  if (statsMode === "day") {
+  let title, eaten, burnedActive, burnBody, suffix;
+  if (mode === "day") {
     title = "Deficit caloric";
     eaten = eatenTotal;
     burnedActive = burnedActiveTotal;
+    burnBody = bodyBurnTotal;
     suffix = "";
-  } else if (dayCount >= 1) {
+  } else if (effectiveDayCount >= 1) {
     title = "Deficit mediu zilnic";
-    eaten = Math.round(eatenTotal / dayCount);
-    burnedActive = Math.round(burnedActiveTotal / dayCount);
+    eaten = Math.round(eatenTotal / effectiveDayCount);
+    burnedActive = Math.round(burnedActiveTotal / effectiveDayCount);
+    burnBody = Math.round(bodyBurnTotal / effectiveDayCount);
     suffix = "/zi";
   } else {
     return ""; // perioadă fără date: nimic de mediat
@@ -810,34 +1448,25 @@ function deficitHtml(eatenTotal, burnedActiveTotal, dayCount) {
 }
 
 function renderStats() {
-  const [start, end] = periodRange();
-  el.periodLabel.textContent = periodLabelText(start, end);
+  const [start, end] = periodRangeFor(statsPeriod);
+  el.periodLabel.textContent = periodLabelTextFor(statsPeriod, start, end);
   // Nu putem naviga în viitor: dezactivează ">" când perioada ajunge la ziua de azi.
   el.periodNext.disabled = end >= todayStr();
 
-  const items = loadEntries()
-    .filter((e) => e.date >= start && e.date <= end)
-    .sort((a, b) => a.ts - b.ts);
+  // Butoanele „Adaugă o masă / exercițiu" au sens doar pe o zi anume (ziua devine data
+  // implicită a intrării). Pe perioade mai lungi (săpt./lună/an/interval) le ascundem.
+  el.addRow.classList.toggle("hidden", statsPeriod.mode !== "day");
 
-  const meals = items.filter((e) => !isExercise(e));
-  const exercises = items.filter(isExercise);
+  // Cardul „Datele mele" (IMC, kcal, date personale) are sens doar pe o zi anume — un singur IMC
+  // pentru o perioadă mai mare ar fi înșelător. Nivelul de activitate stă separat, mereu vizibil.
+  el.profileCard.classList.toggle("hidden", statsPeriod.mode !== "day");
 
-  // Total mâncat (doar mese) - caloriile arse din exerciții se numără separat.
-  const sum = meals.reduce(
-    (acc, e) => {
-      acc.calories += e.calories;
-      acc.protein_g += e.protein_g;
-      acc.carbs_g += e.carbs_g;
-      acc.fat_g += e.fat_g;
-      return acc;
-    },
-    { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0 }
-  );
-  const burnedActive = exercises.reduce((a, e) => a + e.calories, 0);
+  // Cardul „Datele mele" e dinamic pe perioada selectată: greutatea și vârsta = cele de la
+  // sfârșitul perioadei (pentru „Zi", cele din acea zi). fillProfileCard face și summary + activitate.
+  fillProfileCard(end);
 
-  // Zile distincte în care există intrări (pentru media zilnică).
-  const dayKeys = [...new Set(items.map((e) => e.date))];
-  const dayCount = dayKeys.length;
+  const s = computePeriodStats(start, end);
+  const { items, meals, exercises, eaten: sum, burnedActive, effectiveDayCount } = s;
 
   const countParts = [`${meals.length} ${meals.length === 1 ? "masă" : "mese"}`];
   if (exercises.length) {
@@ -847,19 +1476,19 @@ function renderStats() {
   }
   const countLbl = countParts.join(" · ");
   const totalLbl =
-    dayCount >= 2
-      ? `Total perioadă · ${countLbl} · ${dayCount} zile`
+    effectiveDayCount >= 2
+      ? `Total perioadă · ${countLbl} · ${effectiveDayCount} zile`
       : `Total · ${countLbl}`;
 
-  // Media zilnică apare doar de la 2 zile cu date în sus (pe o zi ar fi redundantă).
+  // Media zilnică apare când perioada acoperă cel puțin 2 zile trăite (pe o zi ar fi redundantă).
   let avgHtml = "";
-  if (dayCount >= 2) {
+  if (effectiveDayCount >= 2) {
     avgHtml = `
       <div class="total-avg">
-        Media zilnică: <b>${Math.round(sum.calories / dayCount)} kcal</b>
-        · ${Math.round(sum.protein_g / dayCount)}P
-        / ${Math.round(sum.carbs_g / dayCount)}C
-        / ${Math.round(sum.fat_g / dayCount)}G
+        Media zilnică: <b>${Math.round(sum.calories / effectiveDayCount)} kcal</b>
+        · ${Math.round(sum.protein_g / effectiveDayCount)}P
+        / ${Math.round(sum.carbs_g / effectiveDayCount)}C
+        / ${Math.round(sum.fat_g / effectiveDayCount)}G
       </div>`;
   }
 
@@ -872,7 +1501,7 @@ function renderStats() {
       <div class="macro"><div class="val">${sum.fat_g}g</div><div class="lbl">Grăsimi</div></div>
     </div>
     ${avgHtml}
-    ${deficitHtml(sum.calories, burnedActive, dayCount)}
+    ${deficitHtml(sum.calories, burnedActive, s.bodyBurnTotal, effectiveDayCount, statsPeriod.mode)}
   `;
 
   if (items.length === 0) {
@@ -1090,20 +1719,331 @@ el.lightbox.addEventListener("click", () => {
 });
 
 // ---------------- Navigare între tab-uri ----------------
+const VIEW_CONFIG = {
+  home: { section: "viewHome", title: "Astăzi" },
+  stats: { section: "viewStats", title: "Statistici" },
+  weigh: { section: "viewWeigh", title: "Cântărire" },
+  reports: { section: "viewReports", title: "Rapoarte" }
+};
+let currentView = null;
+
 function switchView(view) {
-  const isHome = view === "home";
+  if (!VIEW_CONFIG[view]) view = "home";
+  // Când intri pe Rapoarte dintr-o altă pagină, pornești mereu de la listă.
+  if (view === "reports" && currentView !== "reports") openReportId = null;
   localStorage.setItem(VIEW_KEY, view); // ține minte pagina la refresh
-  el.viewHome.classList.toggle("active", isHome);
-  el.viewStats.classList.toggle("active", !isHome);
+  Object.entries(VIEW_CONFIG).forEach(([v, cfg]) => {
+    el[cfg.section].classList.toggle("active", v === view);
+  });
   document.querySelectorAll(".tab").forEach((t) => {
     t.classList.toggle("active", t.dataset.view === view);
   });
-  el.headerTitle.textContent = isHome ? "Astăzi" : "Statistici";
-  if (!isHome) renderStats();
+  el.headerTitle.textContent = VIEW_CONFIG[view].title;
+  currentView = view;
+  if (view === "home") showOnboardingIfNeeded();
+  else if (view === "stats") renderStats();
+  else if (view === "weigh") {
+    // La intrarea pe pagină, pornește formularul de la „acum".
+    const now = toDatetimeLocal(new Date());
+    el.weighDatetime.value = now;
+    el.weighDatetime.max = now;
+    renderWeigh();
+  } else if (view === "reports") renderReports();
 }
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
 });
+
+// ---------------- Cântărire (log greutate + istoric) ----------------
+// Ține profilul sincronizat cu ultima cântărire (greutatea din „Datele mele" e read-only).
+function syncProfileWeight() {
+  const p = loadProfile();
+  if (!p) return;
+  const w = weightForDate(todayStr());
+  if (w) {
+    p.weight_kg = w;
+    saveProfile(p);
+  }
+}
+
+el.weighSave.addEventListener("click", () => {
+  const val = parseFloat(el.weighInput.value);
+  if (!val || val < 20 || val > 400) {
+    el.weighStatus.textContent = "Introdu o greutate validă (20 - 400 kg).";
+    return;
+  }
+  const dtVal = el.weighDatetime.value;
+  if (!dtVal) {
+    el.weighStatus.textContent = "Alege data și ora.";
+    return;
+  }
+  const ts = new Date(dtVal).getTime();
+  if (ts > Date.now()) {
+    el.weighStatus.textContent = "Nu poți alege o dată/oră din viitor.";
+    return;
+  }
+  addWeight({ id: newId(), ts, date: dateStrFromTs(ts), weight_kg: val });
+  syncProfileWeight();
+  el.weighInput.value = "";
+  el.weighStatus.textContent = "Salvat ✓";
+  setTimeout(() => {
+    el.weighStatus.textContent = "";
+  }, 2000);
+  renderWeigh();
+  fillProfileCard(); // reîmprospătează greutatea + IMC/arse din „Datele mele"
+  showOnboardingIfNeeded(); // dacă lipseau doar datele, actualizează formularul de pe Acasă
+});
+
+function renderWeigh() {
+  const [start, end] = periodRangeFor(weighPeriod);
+  el.weighPeriodLabel.textContent = periodLabelTextFor(weighPeriod, start, end);
+  el.weighPeriodNext.disabled = end >= todayStr();
+
+  const ws = loadWeights()
+    .filter((w) => w.date >= start && w.date <= end)
+    .sort((a, b) => b.ts - a.ts);
+  if (ws.length === 0) {
+    el.weighHistory.innerHTML = `<div class="empty">Nicio cântărire în perioada aleasă.</div>`;
+    return;
+  }
+  el.weighHistory.innerHTML = ws.map(weighRowHtml).join("");
+}
+
+function weighRowHtml(w) {
+  return `
+    <div class="weigh-row" data-id="${w.id}">
+      <div class="weigh-info">
+        <div class="weigh-kg">${w.weight_kg} kg</div>
+        <div class="weigh-when">${prettyDate(w.date)} · ${prettyTime(w.ts)}</div>
+      </div>
+      <button class="del" data-id="${w.id}" title="Șterge">🗑</button>
+    </div>`;
+}
+
+el.weighHistory.addEventListener("click", (e) => {
+  const del = e.target.closest(".del");
+  if (!del) return;
+  deleteWeight(del.dataset.id);
+  syncProfileWeight();
+  renderWeigh();
+  fillProfileCard();
+  showOnboardingIfNeeded();
+});
+
+// ---------------- Rapoarte ----------------
+let openReportId = null; // id-ul raportului deschis (null = lista)
+
+// Creează un raport pentru perioada selectată pe o pagină și navighează la Rapoarte.
+function createReport(period) {
+  const [start, end] = periodRangeFor(period);
+  const title =
+    start === end
+      ? `Raport ${prettyDate(start)}`
+      : `Raport ${prettyDate(start)} - ${prettyDate(end)}`;
+  const reps = loadReports();
+  reps.push({ id: newId(), createdTs: Date.now(), mode: period.mode, start, end, title });
+  saveReports(reps);
+  openReportId = null; // aterizezi pe listă, cu raportul nou sus
+  switchView("reports");
+}
+
+function renderReports() {
+  if (openReportId) {
+    renderOpenReport();
+    return;
+  }
+  el.reportDetail.classList.add("hidden");
+  el.reportDetail.innerHTML = "";
+  el.reportsList.classList.remove("hidden");
+  const reps = loadReports().sort((a, b) => b.createdTs - a.createdTs);
+  if (reps.length === 0) {
+    el.reportsList.innerHTML = `<div class="empty">Niciun raport încă. Apasă „Creează Raport" pe Statistici sau Cântărire.</div>`;
+    return;
+  }
+  el.reportsList.innerHTML = reps.map(reportSheetHtml).join("");
+}
+
+function reportSheetHtml(r) {
+  return `
+    <div class="report-sheet" data-id="${r.id}">
+      <div class="report-sheet-info">
+        <div class="report-sheet-title">📄 ${escapeHtml(r.title)}</div>
+        <div class="report-sheet-sub">creat ${prettyDate(dateStrFromTs(r.createdTs))}</div>
+      </div>
+      <button class="del" data-id="${r.id}" title="Șterge">🗑</button>
+    </div>`;
+}
+
+function renderOpenReport() {
+  const r = loadReports().find((x) => x.id === openReportId);
+  if (!r) {
+    openReportId = null;
+    renderReports();
+    return;
+  }
+  el.reportsList.classList.add("hidden");
+  el.reportDetail.classList.remove("hidden");
+  el.reportDetail.innerHTML = reportDetailHtml(r);
+}
+
+// Conținutul complet al unui raport (recalculat mereu din datele curente).
+function reportDetailHtml(r) {
+  const s = computePeriodStats(r.start, r.end);
+  const isDay = r.start === r.end;
+  const profileOk = profileComplete(loadProfile());
+  const burnedTotal = s.bodyBurnTotal + s.burnedActive;
+
+  const toolbar = `
+    <div class="report-toolbar no-print">
+      <button id="report-back" class="ghost-btn">← Înapoi</button>
+      <button id="report-print" class="primary-btn">🖨 Printează PDF</button>
+    </div>`;
+
+  const macrosHtml = `
+    <div class="macros">
+      <div class="macro"><div class="val">${s.eaten.protein_g}g</div><div class="lbl">Proteine</div></div>
+      <div class="macro"><div class="val">${s.eaten.carbs_g}g</div><div class="lbl">Carbo</div></div>
+      <div class="macro"><div class="val">${s.eaten.fat_g}g</div><div class="lbl">Grăsimi</div></div>
+    </div>`;
+
+  let body;
+  if (isDay) {
+    const w = weightForDate(r.start);
+    body = `
+      <h2>${escapeHtml(r.title)}</h2>
+      <div class="report-weight">⚖️ ${w ? w + " kg" : "—"}</div>
+      <div class="report-grid">
+        <div class="report-stat"><div class="val">${s.eaten.calories}</div><div class="lbl">kcal mâncate</div></div>
+        <div class="report-stat"><div class="val">${burnedTotal}</div><div class="lbl">kcal arse (corp + activ)</div></div>
+      </div>
+      ${macrosHtml}
+      ${reportDeficitHtml(s, isDay, profileOk)}
+    `;
+  } else {
+    const dc = s.effectiveDayCount || 1;
+    const row = (lbl, total, unit) =>
+      `<tr><td>${lbl}</td><td>${total}${unit}</td><td>${Math.round(total / dc)}${unit}</td></tr>`;
+    body = `
+      <h2>${escapeHtml(r.title)}</h2>
+      <div class="report-sub">${s.effectiveDayCount} ${s.effectiveDayCount === 1 ? "zi" : "zile"} · ${s.dayCount} cu date · ${prettyDate(r.start)} - ${prettyDate(r.end)}</div>
+      ${weightChartSvg(s.weights)}
+      <table class="report-table">
+        <tr><th></th><th>Total</th><th>Medie/zi</th></tr>
+        ${row("🍽 Mâncate", s.eaten.calories, " kcal")}
+        ${row("🔥 Arse (corp + activ)", burnedTotal, " kcal")}
+        ${row("Proteine", s.eaten.protein_g, " g")}
+        ${row("Carbo", s.eaten.carbs_g, " g")}
+        ${row("Grăsimi", s.eaten.fat_g, " g")}
+      </table>
+      ${reportDeficitHtml(s, isDay, profileOk)}
+    `;
+  }
+
+  return toolbar + `<div class="report-print">${body}</div>`;
+}
+
+// Blocul de deficit/surplus dintr-un raport.
+function reportDeficitHtml(s, isDay, profileOk) {
+  if (!profileOk) {
+    return `<div class="deficit-hint">Completează „Datele mele" ca să vezi deficitul caloric.</div>`;
+  }
+  const burnedTotal = s.bodyBurnTotal + s.burnedActive;
+  const deficitTotal = burnedTotal - s.eaten.calories;
+  if (isDay) {
+    const good = deficitTotal >= 0;
+    return `
+      <div class="deficit-total ${good ? "deficit-good" : "deficit-bad"}">
+        ${good ? "Deficit" : "Surplus"}: ${Math.abs(deficitTotal)} kcal
+      </div>`;
+  }
+  const dc = s.effectiveDayCount || 1;
+  const avg = Math.round(deficitTotal / dc);
+  const good = avg >= 0;
+  return `
+    <div class="report-deficit">
+      <div class="deficit-row"><span>Deficit/surplus total</span><span>${deficitTotal >= 0 ? "" : "−"}${Math.abs(deficitTotal)} kcal</span></div>
+      <div class="deficit-total ${good ? "deficit-good" : "deficit-bad"}">
+        ${good ? "Deficit" : "Surplus"} mediu: ${Math.abs(avg)} kcal/zi
+      </div>
+    </div>`;
+}
+
+// Grafic SVG de evoluție a greutății (fără librării externe).
+function weightChartSvg(weights) {
+  const ws = weights.slice().sort((a, b) => a.ts - b.ts);
+  if (ws.length < 2) {
+    const txt =
+      ws.length === 1
+        ? `O singură cântărire în perioadă: ${ws[0].weight_kg} kg.`
+        : "Nicio cântărire în perioadă pentru grafic.";
+    return `<div class="report-chart-empty">${txt}</div>`;
+  }
+  const W = 520;
+  const H = 200;
+  const padL = 40;
+  const padR = 14;
+  const padT = 16;
+  const padB = 30;
+  const vals = ws.map((w) => w.weight_kg);
+  let min = Math.min(...vals);
+  let max = Math.max(...vals);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const margin = (max - min) * 0.1 || 1;
+  min -= margin;
+  max += margin;
+  const x = (i) => padL + (i / (ws.length - 1)) * (W - padL - padR);
+  const y = (v) => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+  const pts = ws.map((w, i) => `${x(i).toFixed(1)},${y(w.weight_kg).toFixed(1)}`).join(" ");
+  const dots = ws
+    .map((w, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="3" fill="#16a34a" />`)
+    .join("");
+  return `
+    <svg class="weight-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evoluția greutății">
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
+      <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
+      <text x="${padL - 6}" y="${(y(max) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${max.toFixed(1)}</text>
+      <text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>
+      <polyline points="${pts}" fill="none" stroke="#16a34a" stroke-width="2" />
+      ${dots}
+      <text x="${padL}" y="${H - 8}" text-anchor="start" fill="#6b7280" font-size="11">${prettyDate(ws[0].date)}</text>
+      <text x="${W - padR}" y="${H - 8}" text-anchor="end" fill="#6b7280" font-size="11">${prettyDate(ws[ws.length - 1].date)}</text>
+    </svg>`;
+}
+
+// Click în lista de rapoarte: deschide o foaie / șterge.
+el.reportsList.addEventListener("click", (e) => {
+  const del = e.target.closest(".del");
+  if (del) {
+    deleteReport(del.dataset.id);
+    if (openReportId === del.dataset.id) openReportId = null;
+    renderReports();
+    return;
+  }
+  const sheet = e.target.closest(".report-sheet");
+  if (sheet) {
+    openReportId = sheet.dataset.id;
+    renderReports();
+  }
+});
+
+// Click în raportul deschis: înapoi la listă / printează.
+el.reportDetail.addEventListener("click", (e) => {
+  if (e.target.closest("#report-back")) {
+    openReportId = null;
+    renderReports();
+    return;
+  }
+  if (e.target.closest("#report-print")) {
+    window.print();
+  }
+});
+
+// Butoanele „Creează Raport" de pe Statistici și Cântărire.
+el.statsReportBtn.addEventListener("click", () => createReport(statsPeriod));
+el.weighReportBtn.addEventListener("click", () => createReport(weighPeriod));
 
 // ---------------- Helper securitate ----------------
 function escapeHtml(str) {
@@ -1116,11 +2056,41 @@ function escapeHtml(str) {
 
 // ---------------- Init ----------------
 el.headerDate.textContent = prettyDate(todayStr());
-el.rangeStart.value = customStart;
-el.rangeEnd.value = customEnd;
-el.rangeStart.max = todayStr(); // calendarul nu lasă să alegi zile viitoare
-el.rangeEnd.max = todayStr();
-fillProfileForm();
+
+// (Fără cântărire-sămânță: greutatea read-only cade oricum pe cea din profil când nu există
+//  încă nicio cântărire. O sămânță ar crea o intrare fantomă care poate „bate" cântăririle
+//  reale din aceeași zi, fiindcă are ts cu secunde/ms, iar formularul folosește minute.)
+
+// Selectoarele de perioadă (Statistici + Cântărire), pe aceleași funcții.
+statsCfg = {
+  state: statsPeriod,
+  modes: el.periodModes,
+  nav: el.periodNav,
+  prev: el.periodPrev,
+  next: el.periodNext,
+  range: el.periodRange,
+  rangeStart: el.rangeStart,
+  rangeEnd: el.rangeEnd,
+  label: el.periodLabel,
+  render: renderStats
+};
+weighCfg = {
+  state: weighPeriod,
+  modes: el.weighPeriodModes,
+  nav: el.weighPeriodNav,
+  prev: el.weighPeriodPrev,
+  next: el.weighPeriodNext,
+  range: el.weighPeriodRange,
+  rangeStart: el.weighRangeStart,
+  rangeEnd: el.weighRangeEnd,
+  label: el.weighPeriodLabel,
+  render: renderWeigh
+};
+setupPeriodSelector(statsCfg);
+setupPeriodSelector(weighCfg);
+
+fillProfileCard();
+showOnboardingIfNeeded(); // la prima folosire (sau date lipsă) arată formularul pe Acasă
 renderStats();
 // Rămâi pe pagina la care erai înainte de refresh (implicit Acasă).
 switchView(localStorage.getItem(VIEW_KEY) || "home");

@@ -20,12 +20,50 @@
       <nav class="tabbar">
         <button class="tab active" data-view="home">🏠 Acasă</button>
         <button class="tab" data-view="stats">📊 Statistici</button>
+        <button class="tab" data-view="weigh">⚖️ Cântărire</button>
+        <button class="tab" data-view="reports">📄 Rapoarte</button>
       </nav>
     </header>
 
     <main>
       <!-- ============ ACASĂ ============ -->
       <section id="view-home" class="view active">
+        <!-- Formular date personale: apare la prima folosire (sau când lipsesc date) -->
+        <div class="profile-card onboarding-card hidden" id="onboarding-card">
+          <h2>Datele tale 👋</h2>
+          <p class="hint onboarding-intro">
+            Completează-le o singură dată ca aplicația să calculeze corect caloriile. Le poți
+            schimba oricând de aici.
+          </p>
+          <div class="profile-fields">
+            <label class="field">
+              Sex
+              <select id="onb-sex">
+                <option value="M">Bărbat</option>
+                <option value="F">Femeie</option>
+              </select>
+            </label>
+            <label class="field">
+              Data nașterii
+              <input type="date" id="onb-birthdate" />
+            </label>
+            <label class="field">
+              Înălțime
+              <input type="number" id="onb-height" min="50" max="250" inputmode="numeric" placeholder="cm" />
+            </label>
+            <label class="field">
+              Greutate
+              <input type="number" id="onb-weight" min="20" max="400" step="0.1" inputmode="decimal" placeholder="kg" />
+            </label>
+          </div>
+          <p class="hint">
+            Vârsta se calculează singură din data nașterii, iar greutatea se salvează ca prima
+            cântărire (o poți actualiza oricând din ⚖️ Cântărire).
+          </p>
+          <button id="onb-save" class="primary-btn">💾 Salvează datele</button>
+          <div id="onb-status" class="status"></div>
+        </div>
+
         <div class="upload-card">
           <label for="photo-input" class="upload-btn">📷 Adaugă o poză cu mâncare</label>
           <input id="photo-input" type="file" accept="image/*" hidden />
@@ -63,33 +101,41 @@
 
       <!-- ============ STATISTICI ============ -->
       <section id="view-stats" class="view">
-        <!-- Datele personale -->
-        <div class="profile-card">
+        <!-- Datele personale (doar când e selectată o zi) -->
+        <div class="profile-card" id="profile-card">
           <h2>Datele mele</h2>
-          <div class="profile-fields">
-            <label class="field">
-              Sex
-              <select id="profile-sex">
-                <option value="M">Bărbat</option>
-                <option value="F">Femeie</option>
-              </select>
-            </label>
-            <label class="field">
-              Vârstă
-              <input type="number" id="profile-age" min="1" max="120" inputmode="numeric" placeholder="ani" />
-            </label>
-            <label class="field">
-              Înălțime
-              <input type="number" id="profile-height" min="50" max="250" inputmode="numeric" placeholder="cm" />
-            </label>
-            <label class="field">
-              Greutate
-              <input type="number" id="profile-weight" min="20" max="400" step="0.1" inputmode="decimal" placeholder="kg" />
-            </label>
+          <div class="profile-readonly">
+            <div class="profile-ro"><span class="ro-lbl">Sex</span><span class="ro-val" id="profile-sex-val">–</span></div>
+            <div class="profile-ro"><span class="ro-lbl">Vârstă</span><span class="ro-val" id="profile-age-val">–</span></div>
+            <div class="profile-ro"><span class="ro-lbl">Înălțime</span><span class="ro-val" id="profile-height-val">–</span></div>
+            <div class="profile-ro"><span class="ro-lbl">Greutate</span><span class="ro-val" id="profile-weight-val">–</span></div>
           </div>
-          <button id="profile-save" class="primary-btn">💾 Salvează</button>
-          <div id="profile-status" class="status"></div>
+          <p class="hint profile-weight-hint">
+            Greutatea vine din ultima cântărire (⚖️ Cântărire); sexul, data nașterii și înălțimea
+            din 🏠 Acasă.
+          </p>
+          <button id="profile-edit" class="ghost-btn">✏️ Modifică datele (Acasă)</button>
           <div id="profile-summary" class="profile-summary"></div>
+        </div>
+
+        <!-- Nivel de activitate (mereu vizibil, se aplică pe perioada aleasă mai jos) -->
+        <div class="profile-card activity-card">
+          <label class="field profile-activity-field">
+            Nivel de activitate
+            <select id="profile-activity">
+              <option value="" disabled hidden>Niveluri diferite în perioadă</option>
+              <option value="sedentar">Sedentar (×1.2)</option>
+              <option value="usor">Ușor activ (×1.375)</option>
+              <option value="moderat">Moderat activ (×1.55)</option>
+              <option value="foarte">Foarte activ (×1.725)</option>
+              <option value="extra">Extra activ (×1.9)</option>
+            </select>
+          </label>
+          <p class="hint profile-activity-hint">
+            Se aplică pe perioada aleasă mai jos (zi / săptămână / lună / interval) și suprascrie
+            zilele din ea. Datele se recalculează imediat.
+          </p>
+          <div id="activity-status" class="status"></div>
         </div>
 
         <!-- Selector de perioadă -->
@@ -116,13 +162,64 @@
           </div>
         </div>
 
-        <div class="add-row">
+        <div class="add-row" id="stats-add-row">
           <button id="add-manual-btn" class="add-manual-btn">➕ Adaugă o masă</button>
           <button id="add-exercise-btn" class="add-manual-btn">🏃 Adaugă exercițiu</button>
         </div>
 
+        <button id="stats-report-btn" class="report-create-btn">📄 Creează Raport</button>
+
         <div id="totals" class="totals"></div>
         <div id="entries" class="entries"></div>
+      </section>
+
+      <!-- ============ CÂNTĂRIRE ============ -->
+      <section id="view-weigh" class="view">
+        <div class="profile-card weigh-form">
+          <h2>Loghează greutatea</h2>
+          <div class="weigh-fields">
+            <label class="field">
+              Greutate (kg)
+              <input type="number" id="weigh-input" min="20" max="400" step="0.1" inputmode="decimal" placeholder="ex: 74.5" />
+            </label>
+            <label class="field">
+              Data și ora
+              <input type="datetime-local" id="weigh-datetime" />
+            </label>
+          </div>
+          <button id="weigh-save" class="primary-btn">⚖️ Loghează</button>
+          <div id="weigh-status" class="status"></div>
+        </div>
+
+        <!-- Selector de perioadă (identic cu Statistici) -->
+        <div class="period-selector">
+          <div id="weigh-period-modes" class="period-modes">
+            <button class="period-mode active" data-mode="day">Zi</button>
+            <button class="period-mode" data-mode="week">Săpt.</button>
+            <button class="period-mode" data-mode="month">Lună</button>
+            <button class="period-mode" data-mode="year">An</button>
+            <button class="period-mode" data-mode="custom">Interval</button>
+          </div>
+          <div id="weigh-period-nav" class="period-nav">
+            <button id="weigh-period-prev" class="period-arrow" title="Înapoi">‹</button>
+            <div id="weigh-period-label" class="period-label"></div>
+            <button id="weigh-period-next" class="period-arrow" title="Înainte">›</button>
+          </div>
+          <div id="weigh-period-range" class="period-range hidden">
+            <label>De la <input type="date" id="weigh-range-start" /></label>
+            <label>Până la <input type="date" id="weigh-range-end" /></label>
+          </div>
+        </div>
+
+        <button id="weigh-report-btn" class="report-create-btn">📄 Creează Raport</button>
+
+        <div id="weigh-history" class="weigh-history"></div>
+      </section>
+
+      <!-- ============ RAPOARTE ============ -->
+      <section id="view-reports" class="view">
+        <div id="reports-list" class="reports-list"></div>
+        <div id="report-detail" class="report-detail hidden"></div>
       </section>
     </main>
 
@@ -223,6 +320,18 @@
     <!-- ============ Lightbox: poză mărită ============ -->
     <div id="lightbox" class="lightbox hidden">
       <img id="lightbox-img" alt="Poză mărită" />
+    </div>
+
+    <!-- ============ Popover: calendar pentru selectorul de perioadă ============ -->
+    <div id="period-picker" class="period-picker-backdrop hidden">
+      <div class="period-picker-card" role="dialog" aria-label="Alege perioada">
+        <div class="pp-header">
+          <button id="pp-prev" class="pp-arrow" type="button" title="Înapoi">‹</button>
+          <div id="pp-title" class="pp-title"></div>
+          <button id="pp-next" class="pp-arrow" type="button" title="Înainte">›</button>
+        </div>
+        <div id="pp-body" class="pp-body"></div>
+      </div>
     </div>
 
     <script src="app.js"></script>
