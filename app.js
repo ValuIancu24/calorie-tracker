@@ -55,6 +55,12 @@ function toDatetimeLocal(d) {
   )}:${pad(d.getMinutes())}`;
 }
 
+// Parsează un zecimal acceptând ȘI virgula (pe mobil, tastatura RO dă „,", iar <input type=number>
+// o refuză - de aceea câmpurile de greutate sunt type=text și normalizăm aici).
+function parseDecimal(str) {
+  return parseFloat(String(str).replace(",", "."));
+}
+
 // ---------------- Stocare (localStorage = pe telefon) ----------------
 function loadEntries() {
   try {
@@ -274,17 +280,36 @@ function periodActivityLevel(start, end) {
   return mixed ? null : level;
 }
 
-// Media zilnică a caloriilor arse de corp pe zilele TRĂITE din perioadă (start..azi inclusiv,
-// fără viitor). Fiecare zi cu greutatea/activitatea ei. Zilele viitoare nu se numără: ne interesează
-// cât ai ars efectiv, nu cât „ai arde" dacă greutatea ar rămâne neschimbată până la final.
+// Cea mai veche zi cu date reale (mese/exerciții/cântăriri). Sub ea nu are sens să existe
+// statistici: aplicația nu era folosită atunci. Null dacă nu există încă nimic.
+function firstDataDate() {
+  let min = null;
+  for (const e of loadEntries()) if (!min || e.date < min) min = e.date;
+  for (const w of loadWeights()) if (!min || w.date < min) min = w.date;
+  return min;
+}
+// „Podeaua" istoricului: prima zi cu date, sau azi dacă nu există date. Sub ea nu se navighează
+// și nu se calculează (altfel zilele goale dinainte de folosire ar da un deficit fantomă ~BMR).
+function historyFloor() {
+  return firstDataDate() || todayStr();
+}
+// Ziua mai mare (string-uri YYYY-MM-DD se compară lexicografic corect).
+function maxDateStr(a, b) {
+  return a > b ? a : b;
+}
+
+// Media zilnică a caloriilor arse de corp pe zilele TRĂITE din perioadă (max(start,podea)..azi
+// inclusiv, fără viitor). Fiecare zi cu greutatea/activitatea ei. Zilele viitoare nu se numără:
+// ne interesează cât ai ars efectiv, nu cât „ai arde" dacă greutatea ar rămâne neschimbată.
 function avgBodyBurnForPeriod(start, end) {
   if (!profileComplete(loadProfile())) return 0;
   const today = todayStr();
-  if (start > today) return 0; // perioadă integral în viitor
+  const effStart = maxDateStr(start, historyFloor()); // nu numărăm zile dinainte de folosire
   const effEnd = end < today ? end : today;
+  if (effStart > effEnd) return 0; // perioadă integral în viitor sau integral sub podea
   let sum = 0;
   let n = 0;
-  eachDayInclusive(start, effEnd, (day) => {
+  eachDayInclusive(effStart, effEnd, (day) => {
     sum += bodyBurnForDate(day);
     n++;
   });
@@ -855,7 +880,7 @@ el.onbSave.addEventListener("click", () => {
   const sex = el.onbSex.value;
   const birthdate = el.onbBirthdate.value; // YYYY-MM-DD
   const height_cm = parseFloat(el.onbHeight.value);
-  const weight_kg = parseFloat(el.onbWeight.value);
+  const weight_kg = parseDecimal(el.onbWeight.value);
 
   if (!sex || !birthdate || !height_cm || !weight_kg) {
     el.onbStatus.textContent = "Completează toate câmpurile.";
@@ -1110,6 +1135,12 @@ function syncPeriodUI(cfg) {
   cfg.range.classList.toggle("hidden", cfg.state.mode !== "custom");
 }
 
+// Limitele câmpurilor de „Interval": între prima zi cu date (podea) și azi.
+function applyRangeBounds(cfg) {
+  cfg.rangeStart.min = cfg.rangeEnd.min = historyFloor();
+  cfg.rangeStart.max = cfg.rangeEnd.max = todayStr();
+}
+
 function setPeriodMode(cfg, mode) {
   cfg.state.mode = mode;
   if (mode === "custom") {
@@ -1117,6 +1148,7 @@ function setPeriodMode(cfg, mode) {
     cfg.state.customEnd = todayStr();
     cfg.rangeStart.value = cfg.state.customStart;
     cfg.rangeEnd.value = cfg.state.customEnd;
+    applyRangeBounds(cfg); // podeaua se poate extinde dacă între timp ai backfill-uit date
   } else {
     cfg.state.anchor = new Date();
   }
@@ -1153,8 +1185,7 @@ function setupPeriodSelector(cfg) {
   });
   cfg.rangeStart.value = cfg.state.customStart;
   cfg.rangeEnd.value = cfg.state.customEnd;
-  cfg.rangeStart.max = todayStr(); // calendarul nu lasă să alegi zile viitoare
-  cfg.rangeEnd.max = todayStr();
+  applyRangeBounds(cfg); // min = prima zi cu date, max = azi (fără viitor, fără dinainte de folosire)
   // Click pe etichetă => deschide calendarul (salt direct la zi/săpt./lună/an).
   cfg.label.classList.add("pp-clickable");
   cfg.label.addEventListener("click", () => openPeriodPicker(cfg));
@@ -1222,13 +1253,25 @@ function pickerNextDisabledForMonth() {
   return y > now.getFullYear() || (y === now.getFullYear() && m >= now.getMonth());
 }
 
+// Săgeata „‹" nu duce înainte de luna primei zile cu date (podeaua). Luna care conține podeaua
+// rămâne accesibilă (poate avea zile utile), dar lunile integral dinainte, nu.
+function pickerPrevDisabledForMonth() {
+  const floor = historyFloor();
+  const fy = Number(floor.slice(0, 4));
+  const fm = Number(floor.slice(5, 7)) - 1;
+  const y = pickerView.getFullYear();
+  const m = pickerView.getMonth();
+  return y < fy || (y === fy && m <= fm);
+}
+
 function renderPickerDays() {
   const m = pickerView.getMonth();
   el.ppTitle.textContent = `${MONTHS_RO[m]} ${pickerView.getFullYear()}`;
-  el.ppPrev.disabled = false;
+  el.ppPrev.disabled = pickerPrevDisabledForMonth();
   el.ppNext.disabled = pickerNextDisabledForMonth();
 
   const today = todayStr();
+  const floor = historyFloor();
   const [selStart, selEnd] = periodRangeFor(pickerCfg.state);
   const gridStart = pickerGridStart();
   let cells = "";
@@ -1242,7 +1285,7 @@ function renderPickerDays() {
       ds >= selStart && ds <= selEnd ? "pp-selected" : "",
       ds === today ? "pp-today" : ""
     ].filter(Boolean).join(" ");
-    cells += `<button type="button" class="${cls}" data-date="${ds}" ${ds > today ? "disabled" : ""}>${d.getDate()}</button>`;
+    cells += `<button type="button" class="${cls}" data-date="${ds}" ${ds > today || ds < floor ? "disabled" : ""}>${d.getDate()}</button>`;
   }
   el.ppBody.innerHTML =
     `<div class="pp-weekdays">${WEEKDAYS_RO.map((w) => `<span>${w}</span>`).join("")}</div>` +
@@ -1252,10 +1295,11 @@ function renderPickerDays() {
 function renderPickerWeeks() {
   const m = pickerView.getMonth();
   el.ppTitle.textContent = `${MONTHS_RO[m]} ${pickerView.getFullYear()}`;
-  el.ppPrev.disabled = false;
+  el.ppPrev.disabled = pickerPrevDisabledForMonth();
   el.ppNext.disabled = pickerNextDisabledForMonth();
 
   const today = todayStr();
+  const floor = historyFloor();
   const [selStart] = periodRangeFor(pickerCfg.state); // lunea săptămânii selectate
   const gridStart = pickerGridStart();
   let rows = "";
@@ -1263,6 +1307,9 @@ function renderPickerWeeks() {
     const rowStart = new Date(gridStart);
     rowStart.setDate(gridStart.getDate() + r * 7);
     const rowStartStr = dateStrFromDate(rowStart); // e mereu o zi de luni
+    const rowEnd = new Date(rowStart);
+    rowEnd.setDate(rowStart.getDate() + 6);
+    const rowEndStr = dateStrFromDate(rowEnd); // duminica săptămânii
     let days = "";
     for (let c = 0; c < 7; c++) {
       const d = new Date(rowStart);
@@ -1275,7 +1322,9 @@ function renderPickerWeeks() {
       days += `<span class="${dcls}">${d.getDate()}</span>`;
     }
     const selected = rowStartStr === selStart ? "pp-selected" : "";
-    rows += `<button type="button" class="pp-week-row ${selected}" data-date="${rowStartStr}" ${rowStartStr > today ? "disabled" : ""}>${days}</button>`;
+    // Săptămâna e blocată dacă începe în viitor sau se termină integral înainte de podea.
+    const disabled = rowStartStr > today || rowEndStr < floor;
+    rows += `<button type="button" class="pp-week-row ${selected}" data-date="${rowStartStr}" ${disabled ? "disabled" : ""}>${days}</button>`;
   }
   el.ppBody.innerHTML =
     `<div class="pp-weekdays">${WEEKDAYS_RO.map((w) => `<span>${w}</span>`).join("")}</div>` +
@@ -1285,8 +1334,11 @@ function renderPickerWeeks() {
 function renderPickerMonths() {
   const y = pickerView.getFullYear();
   const now = new Date();
+  const floor = historyFloor();
+  const fy = Number(floor.slice(0, 4));
+  const fm = Number(floor.slice(5, 7)) - 1;
   el.ppTitle.textContent = String(y);
-  el.ppPrev.disabled = false;
+  el.ppPrev.disabled = y <= fy; // anul de sub podea nu are luni utile
   el.ppNext.disabled = y >= now.getFullYear();
 
   const [selStart] = periodRangeFor(pickerCfg.state);
@@ -1294,7 +1346,9 @@ function renderPickerMonths() {
   const selM = Number(selStart.slice(5, 7)) - 1;
   let cells = "";
   for (let mo = 0; mo < 12; mo++) {
-    const disabled = y > now.getFullYear() || (y === now.getFullYear() && mo > now.getMonth());
+    const future = y > now.getFullYear() || (y === now.getFullYear() && mo > now.getMonth());
+    const belowFloor = y < fy || (y === fy && mo < fm); // luna integral dinainte de prima folosire
+    const disabled = future || belowFloor;
     const selected = y === selY && mo === selM ? "pp-selected" : "";
     cells += `<button type="button" class="pp-month ${selected}" data-month="${mo}" ${disabled ? "disabled" : ""}>${MONTHS_RO_SHORT[mo]}</button>`;
   }
@@ -1303,9 +1357,10 @@ function renderPickerMonths() {
 
 function renderPickerYears() {
   const now = new Date();
+  const fy = Number(historyFloor().slice(0, 4));
   const base = Math.floor(pickerView.getFullYear() / 12) * 12;
   el.ppTitle.textContent = `${base} - ${base + 11}`;
-  el.ppPrev.disabled = false;
+  el.ppPrev.disabled = base <= fy; // blocul dinainte e integral sub podea
   el.ppNext.disabled = base + 12 > now.getFullYear();
 
   const [selStart] = periodRangeFor(pickerCfg.state);
@@ -1314,7 +1369,8 @@ function renderPickerYears() {
   for (let i = 0; i < 12; i++) {
     const yr = base + i;
     const selected = yr === selY ? "pp-selected" : "";
-    cells += `<button type="button" class="pp-year ${selected}" data-year="${yr}" ${yr > now.getFullYear() ? "disabled" : ""}>${yr}</button>`;
+    const disabled = yr > now.getFullYear() || yr < fy;
+    cells += `<button type="button" class="pp-year ${selected}" data-year="${yr}" ${disabled ? "disabled" : ""}>${yr}</button>`;
   }
   el.ppBody.innerHTML = `<div class="pp-years">${cells}</div>`;
 }
@@ -1376,17 +1432,20 @@ function computePeriodStats(start, end) {
   // Zile distincte cu intrări (informativ: câte zile chiar ai logat ceva).
   const dayKeys = [...new Set(items.map((e) => e.date))].sort();
 
-  // Mediem pe zilele TRĂITE din perioadă: de la început până azi inclusiv, fără viitor. Toate
-  // aceste zile contează la medii (chiar și cele fără nimic logat), fiindcă le-ai trăit efectiv.
+  // Mediem pe zilele TRĂITE din perioadă: de la max(început, podea) până azi inclusiv, fără viitor.
+  // Toate aceste zile contează la medii (chiar și cele fără nimic logat), fiindcă le-ai trăit efectiv.
+  // „Podeaua" exclude zilele dinainte de prima folosire (ex: o săptămână care calcă pe prima zi
+  // numără doar de la prima zi încolo, nu și zilele goale dinainte).
   const today = todayStr();
-  const hasPast = start <= today;
+  const effStart = maxDateStr(start, historyFloor());
   const effEnd = end < today ? end : today;
-  const effectiveDayCount = hasPast ? countDaysInclusive(start, effEnd) : 0;
+  const hasPast = effStart <= effEnd;
+  const effectiveDayCount = hasPast ? countDaysInclusive(effStart, effEnd) : 0;
 
   // Arse de corp: suma pe fiecare zi trăită din perioadă (cu greutatea/activitatea din ziua ei).
   let bodyBurnTotal = 0;
   if (profileComplete(loadProfile()) && hasPast) {
-    eachDayInclusive(start, effEnd, (d) => {
+    eachDayInclusive(effStart, effEnd, (d) => {
       bodyBurnTotal += bodyBurnForDate(d);
     });
   }
@@ -1452,6 +1511,8 @@ function renderStats() {
   el.periodLabel.textContent = periodLabelTextFor(statsPeriod, start, end);
   // Nu putem naviga în viitor: dezactivează ">" când perioada ajunge la ziua de azi.
   el.periodNext.disabled = end >= todayStr();
+  // Nici înainte de prima zi cu date: dezactivează "<" când perioada atinge/coboară sub podea.
+  el.periodPrev.disabled = start <= historyFloor();
 
   // Butoanele „Adaugă o masă / exercițiu" au sens doar pe o zi anume (ziua devine data
   // implicită a intrării). Pe perioade mai lungi (săpt./lună/an/interval) le ascundem.
@@ -1767,7 +1828,7 @@ function syncProfileWeight() {
 }
 
 el.weighSave.addEventListener("click", () => {
-  const val = parseFloat(el.weighInput.value);
+  const val = parseDecimal(el.weighInput.value);
   if (!val || val < 20 || val > 400) {
     el.weighStatus.textContent = "Introdu o greutate validă (20 - 400 kg).";
     return;
@@ -1798,6 +1859,7 @@ function renderWeigh() {
   const [start, end] = periodRangeFor(weighPeriod);
   el.weighPeriodLabel.textContent = periodLabelTextFor(weighPeriod, start, end);
   el.weighPeriodNext.disabled = end >= todayStr();
+  el.weighPeriodPrev.disabled = start <= historyFloor();
 
   const ws = loadWeights()
     .filter((w) => w.date >= start && w.date <= end)
