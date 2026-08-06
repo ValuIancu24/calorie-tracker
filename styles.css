@@ -1256,3 +1256,28 @@ main {
     display: none !important;
   }
 }
+
+/* ---------- Card copie de siguranță (Acasă) ---------- */
+.backup-card {
+  margin-top: 16px;
+  text-align: left;
+}
+.backup-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.backup-card .hint {
+  text-align: left;
+}
+.backup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.backup-actions > .primary-btn,
+.backup-actions > .ghost-btn {
+  flex: 1;
+}
+.backup-card .status {
+  text-align: left;
+}

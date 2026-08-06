@@ -396,6 +396,11 @@ const el = {
   actions: document.getElementById("result-actions"),
   saveBtn: document.getElementById("save-btn"),
   discardBtn: document.getElementById("discard-btn"),
+  // copie de siguranță (Acasă)
+  exportBtn: document.getElementById("export-btn"),
+  importBtn: document.getElementById("import-btn"),
+  importInput: document.getElementById("import-input"),
+  backupStatus: document.getElementById("backup-status"),
   // statistici
   totals: document.getElementById("totals"),
   entries: document.getElementById("entries"),
@@ -598,6 +603,86 @@ el.discardBtn.addEventListener("click", () => {
   resetPreview();
   el.previewCard.classList.add("hidden");
   pendingFile = null;
+});
+
+// ---------------- Copie de siguranță (export / import) ----------------
+// Toate cheile de DATE ale aplicației (fără cele pur UI, ex. ct_view).
+const BACKUP_KEYS = [STORAGE_KEY, WEIGHTS_KEY, PROFILE_KEY, ACTIVITY_KEY, REPORTS_KEY];
+
+// Descarcă un JSON cu tot (mese cu poze, cântăriri, profil, activitate, rapoarte).
+function exportBackup() {
+  const data = {};
+  for (const k of BACKUP_KEYS) {
+    const raw = localStorage.getItem(k);
+    if (raw == null) continue;
+    try {
+      data[k] = JSON.parse(raw);
+    } catch {
+      data[k] = raw;
+    }
+  }
+  const backup = { app: "calorie-tracker", version: 1, exportedAt: new Date().toISOString(), data };
+  const name = `klawriz-backup-${todayStr()}.json`;
+  const blob = new Blob([JSON.stringify(backup)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  const mealCount = Array.isArray(data[STORAGE_KEY]) ? data[STORAGE_KEY].length : 0;
+  el.backupStatus.textContent = `Backup creat (${mealCount} intrări). Caută „${name}” în Descărcări.`;
+}
+
+// Citește un fișier de backup și, după confirmare, ÎNLOCUIEȘTE datele curente cu cele din el.
+function importBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch {
+      el.backupStatus.textContent = "Fișier invalid (nu e un JSON valid).";
+      return;
+    }
+    if (!parsed || parsed.app !== "calorie-tracker" || !parsed.data) {
+      el.backupStatus.textContent = "Fișierul nu pare un backup al acestei aplicații.";
+      return;
+    }
+    const keys = BACKUP_KEYS.filter((k) => k in parsed.data);
+    if (keys.length === 0) {
+      el.backupStatus.textContent = "Backup-ul nu conține date de restaurat.";
+      return;
+    }
+    const n = Array.isArray(parsed.data[STORAGE_KEY]) ? parsed.data[STORAGE_KEY].length : 0;
+    if (!confirm(`Importul ÎNLOCUIEȘTE toate datele curente cu cele din fișier (${n} intrări). Continui?`)) {
+      return;
+    }
+    try {
+      for (const k of keys) {
+        localStorage.setItem(k, JSON.stringify(parsed.data[k]));
+      }
+    } catch (e) {
+      el.backupStatus.textContent = "Nu am putut scrie datele (memorie plină?). Import anulat.";
+      return;
+    }
+    el.backupStatus.textContent = "Import reușit. Reîncarc aplicația...";
+    setTimeout(() => location.reload(), 700);
+  };
+  reader.onerror = () => {
+    el.backupStatus.textContent = "Nu am putut citi fișierul.";
+  };
+  reader.readAsText(file);
+}
+
+el.exportBtn.addEventListener("click", exportBackup);
+el.importBtn.addEventListener("click", () => el.importInput.click());
+el.importInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) importBackup(file);
+  el.importInput.value = ""; // permite reimportarea aceluiași fișier
 });
 
 // ---------------- Adăugare manuală (poză + notițe + dată/oră alese) ----------------
