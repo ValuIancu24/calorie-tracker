@@ -97,6 +97,20 @@
             Scrie ce ai făcut, ex: „am înotat 15 min, apoi cardio o oră".
           </p>
         </div>
+
+        <div class="upload-card backup-card">
+          <h2 class="backup-title">💾 Copie de siguranță</h2>
+          <p class="hint">
+            Salvează toate datele (mese, poze, cântăriri, profil) într-un fișier, ca să le poți
+            recupera oricând. Importul înlocuiește datele curente cu cele din fișier.
+          </p>
+          <div class="backup-actions">
+            <button id="export-btn" class="primary-btn">⬇️ Exportă</button>
+            <button id="import-btn" class="ghost-btn">⬆️ Importă</button>
+            <input id="import-input" type="file" accept="application/json,.json" hidden />
+          </div>
+          <div id="backup-status" class="status"></div>
+        </div>
       </section>
 
       <!-- ============ STATISTICI ============ -->
