@@ -73,12 +73,22 @@ function saveEntries(entries) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 function addEntry(entry) {
+  // Poza (dacă există) merge în IndexedDB + cache; în localStorage salvăm intrarea FĂRĂ poză.
+  if (entry.thumb) {
+    photoCache.set(entry.id, entry.thumb); // sincron -> se afișează imediat
+    idbPut(entry.id, entry.thumb).catch((e) =>
+      console.warn("Nu am putut salva poza în IndexedDB:", e)
+    );
+    delete entry.thumb;
+  }
   const entries = loadEntries();
   entries.push(entry);
   saveEntries(entries);
 }
 function deleteEntry(id) {
   saveEntries(loadEntries().filter((e) => e.id !== id));
+  photoCache.delete(id);
+  idbDelete(id).catch((e) => console.warn("Nu am putut șterge poza din IndexedDB:", e));
   renderStats();
 }
 function newId() {
@@ -88,6 +98,124 @@ function newId() {
 // O intrare fara `type` (dinainte de exercitii) e considerata masa.
 function isExercise(e) {
   return e.type === "exercise";
+}
+
+// ---------------- Poze în IndexedDB (localStorage e prea mic pentru base64) ----------------
+// Pozele meselor (miniatura base64) NU mai stau în `ct_entries` (localStorage ~5MB, se umple în
+// câteva săptămâni), ci în IndexedDB (spațiu mare). `ct_entries` ține doar datele; poza se leagă
+// prin id-ul mesei. Un cache în memorie ține pozele, ca tot codul de afișare să rămână sincron.
+const PHOTO_DB = "ct_photos";
+const PHOTO_STORE = "photos";
+const MIGRATED_KEY = "ct_idb_migrated";
+
+const photoCache = new Map(); // id -> dataURL
+function photoFor(id) {
+  return photoCache.get(id) || null;
+}
+
+let photoDbPromise = null;
+function openPhotoDb() {
+  if (!photoDbPromise) {
+    photoDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(PHOTO_DB, 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains(PHOTO_STORE)) {
+          req.result.createObjectStore(PHOTO_STORE); // cheie (out-of-line) = id-ul mesei
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return photoDbPromise;
+}
+function idbPut(id, dataUrl) {
+  return openPhotoDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).put(dataUrl, id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+function idbDelete(id) {
+  return openPhotoDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+function idbGetAll() {
+  return openPhotoDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_STORE, "readonly");
+        const store = tx.objectStore(PHOTO_STORE);
+        const keysReq = store.getAllKeys();
+        const valsReq = store.getAll();
+        tx.oncomplete = () => {
+          const map = new Map();
+          for (let i = 0; i < keysReq.result.length; i++) {
+            map.set(keysReq.result[i], valsReq.result[i]);
+          }
+          resolve(map);
+        };
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+function idbClear() {
+  return openPhotoDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      })
+  );
+}
+
+// Mută pozele inline vechi din `ct_entries` în IndexedDB. Rulează o singură dată (flag),
+// e idempotentă și NU șterge date: doar mută poza și scoate `thumb` din intrare.
+async function migratePhotosIfNeeded() {
+  if (localStorage.getItem(MIGRATED_KEY) === "1") return;
+  const entries = loadEntries();
+  let changed = false;
+  for (const e of entries) {
+    if (e.thumb) {
+      await idbPut(e.id, e.thumb);
+      photoCache.set(e.id, e.thumb);
+      delete e.thumb;
+      changed = true;
+    }
+  }
+  if (changed) saveEntries(entries); // ct_entries se micșorează -> eliberează localStorage
+  localStorage.setItem(MIGRATED_KEY, "1");
+}
+
+// Umple cache-ul din IndexedDB (o dată, la pornire).
+async function hydratePhotoCache() {
+  const map = await idbGetAll();
+  photoCache.clear();
+  for (const [id, url] of map) photoCache.set(id, url);
+}
+
+// Pregătește stratul de poze înainte de prima randare. Dacă IndexedDB nu e disponibil,
+// afișarea cade pe pozele inline (dacă mai există în ct_entries), via `photoFor(id) || e.thumb`.
+async function initPhotos() {
+  try {
+    await migratePhotosIfNeeded();
+    await hydratePhotoCache();
+  } catch (err) {
+    console.warn("IndexedDB indisponibil; folosesc pozele inline dacă există.", err);
+  }
 }
 
 // ---------------- Cantariri (istoric greutate) ----------------
@@ -621,7 +749,17 @@ function exportBackup() {
       data[k] = raw;
     }
   }
-  const backup = { app: "calorie-tracker", version: 1, exportedAt: new Date().toISOString(), data };
+  // Pozele stau acum în IndexedDB (nu în ct_entries), deci le atașăm separat ca backup-ul
+  // să rămână complet. `photoCache` e sincronizat cu IndexedDB la runtime.
+  const photos = {};
+  for (const [id, url] of photoCache) photos[id] = url;
+  const backup = {
+    app: "calorie-tracker",
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    data,
+    photos
+  };
   const name = `klawriz-backup-${todayStr()}.json`;
   const blob = new Blob([JSON.stringify(backup)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -668,8 +806,25 @@ function importBackup(file) {
       el.backupStatus.textContent = "Nu am putut scrie datele (memorie plină?). Import anulat.";
       return;
     }
+    // Un restore înlocuiește TOTUL, deci golim întâi pozele vechi din IndexedDB (evită orfane).
+    // Format nou (`parsed.photos`) -> scriem pozele în IDB. Format vechi (poze inline în
+    // ct_entries, fără `parsed.photos`) -> golim flag-ul ca migrarea de la reload să le mute în IDB.
+    localStorage.removeItem(MIGRATED_KEY);
+    const photos =
+      parsed.photos && typeof parsed.photos === "object" ? parsed.photos : null;
+    const writePhotos = idbClear()
+      .catch(() => {})
+      .then(() =>
+        photos
+          ? Promise.all(
+              Object.entries(photos).map(([id, url]) =>
+                idbPut(id, url).catch((err) => console.warn("Poză neimportată:", id, err))
+              )
+            )
+          : Promise.resolve()
+      );
     el.backupStatus.textContent = "Import reușit. Reîncarc aplicația...";
-    setTimeout(() => location.reload(), 700);
+    writePhotos.finally(() => setTimeout(() => location.reload(), 500));
   };
   reader.onerror = () => {
     el.backupStatus.textContent = "Nu am putut citi fișierul.";
@@ -811,8 +966,9 @@ el.readdModal.addEventListener("click", (e) => {
 
 function openReaddModal(entry) {
   pendingReadd = entry;
-  const thumb = entry.thumb
-    ? `<img src="${entry.thumb}" alt="${escapeHtml(entry.food_name)}" />`
+  const src = photoFor(entry.id) || entry.thumb;
+  const thumb = src
+    ? `<img src="${src}" alt="${escapeHtml(entry.food_name)}" />`
     : `<div class="readd-thumb-ph">🍽</div>`;
   el.readdSummary.innerHTML = `
     ${thumb}
@@ -849,7 +1005,7 @@ el.readdSave.addEventListener("click", () => {
     id: newId(),
     date: dateStrFromTs(ts),
     ts,
-    thumb: s.thumb,
+    thumb: photoFor(s.id) || s.thumb,
     food_name: s.food_name,
     grams: s.grams,
     calories: s.calories,
@@ -1680,8 +1836,9 @@ function renderStats() {
 
 function entryHtml(e) {
   if (isExercise(e)) return exerciseEntryHtml(e);
-  const thumb = e.thumb
-    ? `<img src="${e.thumb}" class="entry-thumb" alt="${escapeHtml(e.food_name)}" />`
+  const src = photoFor(e.id) || e.thumb;
+  const thumb = src
+    ? `<img src="${src}" class="entry-thumb" alt="${escapeHtml(e.food_name)}" />`
     : `<div class="entry-thumb placeholder">🍽</div>`;
   return `
     <div class="entry entry-meal" data-id="${e.id}" title="Vezi detalii">
@@ -1790,8 +1947,9 @@ function openMealDetail(id) {
   const notesHtml = notes
     ? `<div class="detail-notes"><div class="detail-notes-lbl">Notițe</div><div class="detail-notes-txt">${escapeHtml(notes)}</div></div>`
     : `<div class="detail-notes detail-notes-empty">Fără notițe la această masă.</div>`;
-  const thumb = e.thumb
-    ? `<img src="${e.thumb}" class="detail-photo" alt="${escapeHtml(e.food_name)}" />`
+  const src = photoFor(e.id) || e.thumb;
+  const thumb = src
+    ? `<img src="${src}" class="detail-photo" alt="${escapeHtml(e.food_name)}" />`
     : "";
   el.mealDetailBody.innerHTML = `
     ${thumb}
@@ -2236,8 +2394,13 @@ weighCfg = {
 setupPeriodSelector(statsCfg);
 setupPeriodSelector(weighCfg);
 
-fillProfileCard();
-showOnboardingIfNeeded(); // la prima folosire (sau date lipsă) arată formularul pe Acasă
-renderStats();
-// Rămâi pe pagina la care erai înainte de refresh (implicit Acasă).
-switchView(localStorage.getItem(VIEW_KEY) || "home");
+// Pregătește pozele (IndexedDB: migrare la prima rulare + umplere cache) ÎNAINTE de prima
+// randare, ca lista de mese să apară direct cu poze, nu cu placeholdere.
+(async () => {
+  await initPhotos();
+  fillProfileCard();
+  showOnboardingIfNeeded(); // la prima folosire (sau date lipsă) arată formularul pe Acasă
+  renderStats();
+  // Rămâi pe pagina la care erai înainte de refresh (implicit Acasă).
+  switchView(localStorage.getItem(VIEW_KEY) || "home");
+})();
