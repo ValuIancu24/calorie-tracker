@@ -1716,15 +1716,15 @@ function deficitHtml(eatenTotal, burnedActiveTotal, bodyBurnTotal, effectiveDayC
     return `<div class="deficit-hint">Completează „Datele mele" (pe modul Zi) ca să vezi deficitul caloric.</div>`;
   }
 
-  let title, eaten, burnedActive, burnBody, suffix;
+  let baseTitle, eaten, burnedActive, burnBody, suffix;
   if (mode === "day") {
-    title = "Deficit caloric";
+    baseTitle = "caloric";
     eaten = eatenTotal;
     burnedActive = burnedActiveTotal;
     burnBody = bodyBurnTotal;
     suffix = "";
   } else if (effectiveDayCount >= 1) {
-    title = "Deficit mediu zilnic";
+    baseTitle = "mediu zilnic";
     eaten = Math.round(eatenTotal / effectiveDayCount);
     burnedActive = Math.round(burnedActiveTotal / effectiveDayCount);
     burnBody = Math.round(bodyBurnTotal / effectiveDayCount);
@@ -1735,6 +1735,8 @@ function deficitHtml(eatenTotal, burnedActiveTotal, bodyBurnTotal, effectiveDayC
 
   const deficit = burnBody + burnedActive - eaten;
   const isDeficit = deficit >= 0;
+  // Titlul urmează semnul: „Deficit …" sau „Surplus …", consistent cu valoarea de dedesubt.
+  const title = `${isDeficit ? "Deficit" : "Surplus"} ${baseTitle}`;
   return `
     <div class="deficit-card">
       <div class="deficit-title">${title}</div>
@@ -2221,6 +2223,10 @@ function reportDetailHtml(r) {
         <div class="report-stat"><div class="val">${s.eaten.calories}</div><div class="lbl">kcal mâncate</div></div>
         <div class="report-stat"><div class="val">${burnedTotal}</div><div class="lbl">kcal arse (corp + activ)</div></div>
       </div>
+      <div class="report-grid">
+        <div class="report-stat"><div class="val">${s.bodyBurnTotal}</div><div class="lbl">arse (doar corp)</div></div>
+        <div class="report-stat"><div class="val">${s.burnedActive}</div><div class="lbl">arse (doar activ)</div></div>
+      </div>
       ${macrosHtml}
       ${reportDeficitHtml(s, isDay, profileOk)}
     `;
@@ -2232,10 +2238,13 @@ function reportDetailHtml(r) {
       <h2>${escapeHtml(r.title)}</h2>
       <div class="report-sub">${s.effectiveDayCount} ${s.effectiveDayCount === 1 ? "zi" : "zile"} · ${s.dayCount} cu date · ${prettyDate(r.start)} - ${prettyDate(r.end)}</div>
       ${weightChartSvg(s.weights)}
+      ${weightChangeHtml(s.weights)}
       <table class="report-table">
         <tr><th></th><th>Total</th><th>Medie/zi</th></tr>
         ${row("🍽 Mâncate", s.eaten.calories, " kcal")}
         ${row("🔥 Arse (corp + activ)", burnedTotal, " kcal")}
+        ${row("🔆 Arse (doar corp)", s.bodyBurnTotal, " kcal")}
+        ${row("🏃 Arse (doar activ)", s.burnedActive, " kcal")}
         ${row("Proteine", s.eaten.protein_g, " g")}
         ${row("Carbo", s.eaten.carbs_g, " g")}
         ${row("Grăsimi", s.eaten.fat_g, " g")}
@@ -2263,10 +2272,10 @@ function reportDeficitHtml(s, isDay, profileOk) {
   }
   const dc = s.effectiveDayCount || 1;
   const avg = Math.round(deficitTotal / dc);
-  const good = avg >= 0;
+  const good = deficitTotal >= 0;
   return `
     <div class="report-deficit">
-      <div class="deficit-row"><span>Deficit/surplus total</span><span>${deficitTotal >= 0 ? "" : "−"}${Math.abs(deficitTotal)} kcal</span></div>
+      <div class="deficit-row"><span>${good ? "Deficit total" : "Surplus total"}</span><span>${Math.abs(deficitTotal)} kcal</span></div>
       <div class="deficit-total ${good ? "deficit-good" : "deficit-bad"}">
         ${good ? "Deficit" : "Surplus"} mediu: ${Math.abs(avg)} kcal/zi
       </div>
@@ -2290,32 +2299,75 @@ function weightChartSvg(weights) {
   const padT = 16;
   const padB = 30;
   const vals = ws.map((w) => w.weight_kg);
-  let min = Math.min(...vals);
-  let max = Math.max(...vals);
-  if (min === max) {
-    min -= 1;
-    max += 1;
-  }
-  const margin = (max - min) * 0.1 || 1;
-  min -= margin;
-  max += margin;
+  // Scala = exact min..max al datelor (fără padding de valoare, care ar induce în eroare).
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min;
+  // Margine DOAR în pixeli: punctele extreme (min/max) nu se lipesc de marginea zonei de desen
+  // și nu sunt tăiate. Nu afectează valorile afișate pe axă.
+  const dotInset = 6;
+  const plotTop = padT + dotInset;
+  const plotBottom = H - padB - dotInset;
   const x = (i) => padL + (i / (ws.length - 1)) * (W - padL - padR);
-  const y = (v) => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+  // Când toate greutățile sunt egale (range 0), desenăm linia orizontal pe mijloc.
+  const y = (v) =>
+    range === 0
+      ? (plotTop + plotBottom) / 2
+      : plotTop + (1 - (v - min) / range) * (plotBottom - plotTop);
   const pts = ws.map((w, i) => `${x(i).toFixed(1)},${y(w.weight_kg).toFixed(1)}`).join(" ");
   const dots = ws
     .map((w, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="3" fill="#16a34a" />`)
     .join("");
+  // Cercuri transparente mai mari peste fiecare punct: măresc zona de hover și poartă tooltip-ul
+  // nativ (<title>) cu greutatea exactă + data cântăririi.
+  const hits = ws
+    .map(
+      (w, i) =>
+        `<circle cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="10" fill="transparent"><title>${w.weight_kg} kg · ${prettyDate(w.date)}</title></circle>`
+    )
+    .join("");
+  // Etichetele axei arată acum exact min/max reale. Dacă sunt egale, una singură pe centru.
+  const axisLabels =
+    range === 0
+      ? `<text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>`
+      : `<text x="${padL - 6}" y="${(y(max) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${max.toFixed(1)}</text>
+      <text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>`;
   return `
     <svg class="weight-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evoluția greutății">
       <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
       <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
-      <text x="${padL - 6}" y="${(y(max) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${max.toFixed(1)}</text>
-      <text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>
+      ${axisLabels}
       <polyline points="${pts}" fill="none" stroke="#16a34a" stroke-width="2" />
       ${dots}
+      ${hits}
       <text x="${padL}" y="${H - 8}" text-anchor="start" fill="#6b7280" font-size="11">${prettyDate(ws[0].date)}</text>
       <text x="${W - padR}" y="${H - 8}" text-anchor="end" fill="#6b7280" font-size="11">${prettyDate(ws[ws.length - 1].date)}</text>
     </svg>`;
+}
+
+// Diferența de greutate pe perioadă = ultima − prima cantarire din interval (consistent cu graficul).
+// Pe rapoartele de minim 2 zile apare mereu: dacă sunt sub 2 cântăriri, arătăm „Greutate constantă".
+function weightChangeHtml(weights) {
+  const ws = weights.slice().sort((a, b) => a.ts - b.ts);
+  let cls = "wc-flat";
+  let label = "➖ Greutate constantă";
+  if (ws.length >= 2) {
+    const delta = ws[ws.length - 1].weight_kg - ws[0].weight_kg;
+    const kg = fmtKg(Math.abs(delta));
+    if (delta < 0) {
+      cls = "wc-down";
+      label = `📉 Slăbit: ${kg} kg`;
+    } else if (delta > 0) {
+      cls = "wc-up";
+      label = `📈 Îngrășat: ${kg} kg`;
+    }
+  }
+  return `<div class="report-weight-change ${cls}">${label}</div>`;
+}
+
+// Formatează un delta de greutate: max 2 zecimale, fără zerouri de coadă (ex. 0.7, 1.25, 2).
+function fmtKg(n) {
+  return String(Math.round(n * 100) / 100);
 }
 
 // Click în lista de rapoarte: deschide o foaie / șterge.

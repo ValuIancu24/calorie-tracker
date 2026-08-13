@@ -1043,6 +1043,20 @@ main {
   font-size: 13px;
   margin-bottom: 14px;
 }
+.report-weight-change {
+  font-size: 15px;
+  font-weight: 700;
+  margin: -4px 0 14px;
+}
+.report-weight-change.wc-down {
+  color: var(--green);
+}
+.report-weight-change.wc-up {
+  color: var(--danger);
+}
+.report-weight-change.wc-flat {
+  color: var(--muted);
+}
 
 /* ---------- Calendar pentru selectorul de perioadă ---------- */
 .period-picker-backdrop {
