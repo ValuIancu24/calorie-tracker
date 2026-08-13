@@ -1813,27 +1813,35 @@ function renderStats() {
     return;
   }
 
-  // Grupare pe zile, cea mai recentă zi sus.
-  const byDay = new Map();
-  for (const e of items) {
-    if (!byDay.has(e.date)) byDay.set(e.date, []);
-    byDay.get(e.date).push(e);
-  }
-  const days = [...byDay.keys()].sort().reverse();
-  const showDayHeaders = days.length > 1;
+  // Împărțim pe categorii: mesele primele, exercițiile dedesubt. În fiecare categorie grupăm pe
+  // zile (antet doar când perioada acoperă mai multe zile), cu cea mai recentă zi sus și, în
+  // fiecare zi, cele mai recente intrări sus (descrescător cronologic).
+  const showDayHeaders = new Set(items.map((e) => e.date)).size > 1;
 
-  el.entries.innerHTML = days
-    .map((date) => {
-      const dayItems = byDay.get(date);
-      const dayKcal = dayItems
-        .filter((e) => !isExercise(e))
-        .reduce((a, e) => a + e.calories, 0);
-      const header = showDayHeaders
-        ? `<div class="day-header"><span>${prettyDate(date)}</span><span>${dayKcal} kcal</span></div>`
-        : "";
-      return header + dayItems.map(entryHtml).join("");
-    })
-    .join("");
+  const categoryHtml = (list, title) => {
+    if (!list.length) return "";
+    const byDay = new Map();
+    for (const e of list) {
+      if (!byDay.has(e.date)) byDay.set(e.date, []);
+      byDay.get(e.date).push(e);
+    }
+    const days = [...byDay.keys()].sort().reverse(); // cea mai recentă zi sus
+    const body = days
+      .map((date) => {
+        const dayItems = byDay.get(date).slice().sort((a, b) => b.ts - a.ts); // recent sus
+        const dayKcal = dayItems.reduce((a, e) => a + e.calories, 0);
+        const header = showDayHeaders
+          ? `<div class="day-header"><span>${prettyDate(date)}</span><span>${dayKcal} kcal</span></div>`
+          : "";
+        return header + dayItems.map(entryHtml).join("");
+      })
+      .join("");
+    return `<div class="entry-category"><div class="entry-category-title">${title}</div>${body}</div>`;
+  };
+
+  el.entries.innerHTML =
+    categoryHtml(items.filter((e) => !isExercise(e)), "🍽 Mese") +
+    categoryHtml(items.filter(isExercise), "🏃 Exerciții");
 }
 
 function entryHtml(e) {
@@ -2316,33 +2324,59 @@ function weightChartSvg(weights) {
       : plotTop + (1 - (v - min) / range) * (plotBottom - plotTop);
   const pts = ws.map((w, i) => `${x(i).toFixed(1)},${y(w.weight_kg).toFixed(1)}`).join(" ");
   const dots = ws
-    .map((w, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="3" fill="#16a34a" />`)
+    .map((w, i) => `<circle class="chart-dot" data-i="${i}" cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="3" fill="#16a34a" />`)
     .join("");
-  // Cercuri transparente mai mari peste fiecare punct: măresc zona de hover și poartă tooltip-ul
-  // nativ (<title>) cu greutatea exactă + data cântăririi.
+  // Cercuri transparente mai mari peste fiecare punct: măresc zona de atins/hover și poartă atât
+  // tooltip-ul nativ (<title>, pe desktop la hover) cât și datele pentru caption (pe telefon la tap).
   const hits = ws
     .map(
       (w, i) =>
-        `<circle cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="10" fill="transparent"><title>${w.weight_kg} kg · ${prettyDate(w.date)}</title></circle>`
+        `<circle class="chart-pt" data-i="${i}" data-kg="${w.weight_kg}" data-date="${w.date}" cx="${x(i).toFixed(1)}" cy="${y(w.weight_kg).toFixed(1)}" r="12" fill="transparent"><title>${w.weight_kg} kg · ${prettyDate(w.date)}</title></circle>`
     )
     .join("");
-  // Etichetele axei arată acum exact min/max reale. Dacă sunt egale, una singură pe centru.
-  const axisLabels =
-    range === 0
-      ? `<text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>`
-      : `<text x="${padL - 6}" y="${(y(max) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${max.toFixed(1)}</text>
-      <text x="${padL - 6}" y="${(y(min) + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${min.toFixed(1)}</text>`;
+  // Etichetele din stânga: greutatea din PRIMA zi, ULTIMA zi, MAXIMĂ și MINIMĂ. Afișăm valorile
+  // distincte (dacă unele coincid, apare o singură dată). Fiecare stă la înălțimea ei reală; le
+  // depărtăm ușor pe verticală doar cât să nu se suprapună textul.
+  const first = ws[0].weight_kg;
+  const last = ws[ws.length - 1].weight_kg;
+  const seen = new Set();
+  const labels = [];
+  for (const v of [max, first, last, min]) {
+    const key = v.toFixed(1);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push({ v, y: y(v) });
+  }
+  labels.sort((a, b) => a.y - b.y); // de sus (max) în jos (min)
+  const minGap = 13;
+  for (let i = 1; i < labels.length; i++) {
+    if (labels[i].y - labels[i - 1].y < minGap) labels[i].y = labels[i - 1].y + minGap;
+  }
+  // dacă gruparea a ieșit sub podeaua graficului, o mutăm în sus cât trebuie
+  if (labels.length) {
+    const overflow = labels[labels.length - 1].y - (H - padB - 2);
+    if (overflow > 0) for (const l of labels) l.y -= overflow;
+  }
+  const axisLabels = labels
+    .map(
+      (l) =>
+        `<text x="${padL - 6}" y="${(l.y + 4).toFixed(1)}" text-anchor="end" fill="#6b7280" font-size="11">${l.v.toFixed(1)}</text>`
+    )
+    .join("");
   return `
-    <svg class="weight-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evoluția greutății">
-      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
-      <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
-      ${axisLabels}
-      <polyline points="${pts}" fill="none" stroke="#16a34a" stroke-width="2" />
-      ${dots}
-      ${hits}
-      <text x="${padL}" y="${H - 8}" text-anchor="start" fill="#6b7280" font-size="11">${prettyDate(ws[0].date)}</text>
-      <text x="${W - padR}" y="${H - 8}" text-anchor="end" fill="#6b7280" font-size="11">${prettyDate(ws[ws.length - 1].date)}</text>
-    </svg>`;
+    <div class="weight-chart-wrap">
+      <svg class="weight-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Evoluția greutății">
+        <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
+        <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#d1d5db" stroke-width="1" />
+        ${axisLabels}
+        <polyline points="${pts}" fill="none" stroke="#16a34a" stroke-width="2" />
+        ${dots}
+        ${hits}
+        <text x="${padL}" y="${H - 8}" text-anchor="start" fill="#6b7280" font-size="11">${prettyDate(ws[0].date)}</text>
+        <text x="${W - padR}" y="${H - 8}" text-anchor="end" fill="#6b7280" font-size="11">${prettyDate(ws[ws.length - 1].date)}</text>
+      </svg>
+      <div class="chart-caption no-print">👆 Atinge un punct pentru greutate + dată</div>
+    </div>`;
 }
 
 // Diferența de greutate pe perioadă = ultima − prima cantarire din interval (consistent cu graficul).
@@ -2386,7 +2420,7 @@ el.reportsList.addEventListener("click", (e) => {
   }
 });
 
-// Click în raportul deschis: înapoi la listă / printează.
+// Click în raportul deschis: înapoi la listă / printează / tap pe un punct din grafic.
 el.reportDetail.addEventListener("click", (e) => {
   if (e.target.closest("#report-back")) {
     openReportId = null;
@@ -2395,6 +2429,20 @@ el.reportDetail.addEventListener("click", (e) => {
   }
   if (e.target.closest("#report-print")) {
     window.print();
+    return;
+  }
+  // Pe telefon nu există hover: la tap pe un punct arătăm greutatea + data în caption și evidențiem punctul.
+  const pt = e.target.closest(".chart-pt");
+  if (pt) {
+    const wrap = pt.closest(".weight-chart-wrap");
+    const cap = wrap && wrap.querySelector(".chart-caption");
+    if (cap) cap.textContent = `⚖️ ${pt.dataset.kg} kg · ${prettyDate(pt.dataset.date)}`;
+    const svg = pt.closest("svg");
+    if (svg) {
+      svg.querySelectorAll(".chart-dot-active").forEach((d) => d.classList.remove("chart-dot-active"));
+      const dot = svg.querySelector(`.chart-dot[data-i="${pt.dataset.i}"]`);
+      if (dot) dot.classList.add("chart-dot-active");
+    }
   }
 });
 
